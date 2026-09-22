@@ -5,6 +5,10 @@ on:
     - cron: '*/5 * * * *'
   workflow_dispatch:
 
+# 깃허브가 중복 방지 DB를 정상 저장할 수 있도록 쓰기 권한 부여
+permissions:
+  contents: write
+
 jobs:
   check-and-alert:
     runs-on: ubuntu-latest
@@ -36,4 +40,4 @@ jobs:
           git config --global user.email "bot@github.com"
           git add .
           git commit -m "Auto-update notice DB [skip ci]" || exit 0
-          git push || true
+          git push
