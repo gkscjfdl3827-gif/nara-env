@@ -37,11 +37,3 @@ jobs:
           git add .
           git commit -m "Auto-update notice DB [skip ci]" || exit 0
           git push || true
-
-      - name: 중복 방지 DB 상태 자동 동기화
-        run: |
-          git config --global user.name "nara-bot"
-          git config --global user.email "bot@github.com"
-          git add nara_notices.db config.json || true
-          git commit -m "Auto-update notice DB [skip ci]" || exit 0
-          git push || true
