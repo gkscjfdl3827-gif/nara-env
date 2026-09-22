@@ -12,20 +12,21 @@ from core.collector import NaraCollector
 
 def run_cloud_check():
     """
-    클라우드(GitHub Actions / 무료 서버)에서 컴퓨터 없이 24시간 실행되는 수집기
+    클라우드(GitHub Actions / 무료 서버)에서 컴퓨터 없이 24시간 실행되는 수집기.
     환경 변수(Secrets) 또는 config.json을 자동으로 감지합니다.
     """
-    # 1. 설정 로드 (GitHub Secrets 환경변수 우선, 없으면 config.json)
+    # 1. 설정 로드 (GitHub Secrets 환경변수 우선, 비어있으면 config.json 사용)
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
     cfg = {}
     if os.path.exists(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
 
-    service_key = os.environ.get("DATA_GO_KR_SERVICE_KEY", cfg.get("data_go_kr_service_key", ""))
-    ntfy_topic = os.environ.get("NTFY_TOPIC", cfg.get("ntfy_topic", "nara-env-alert-myphone"))
-    tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", cfg.get("telegram_bot_token", ""))
-    tg_chat_id = os.environ.get("TELEGRAM_CHAT_ID", cfg.get("telegram_chat_id", ""))
+    # or 연산자로 처리하여 GitHub Secrets가 비어있어도 config.json의 키를 정상 fallback 사용
+    service_key = os.environ.get("DATA_GO_KR_SERVICE_KEY") or cfg.get("data_go_kr_service_key", "")
+    ntfy_topic = os.environ.get("NTFY_TOPIC") or cfg.get("ntfy_topic", "nara-env-alert-myphone")
+    tg_token = os.environ.get("TELEGRAM_BOT_TOKEN") or cfg.get("telegram_bot_token", "")
+    tg_chat_id = os.environ.get("TELEGRAM_CHAT_ID") or cfg.get("telegram_chat_id", "")
 
     notifier_cfg = {
         "use_ntfy": bool(ntfy_topic),
@@ -46,14 +47,14 @@ def run_cloud_check():
     print(f" - 알림 채널(ntfy 토픽): {ntfy_topic}")
 
     raw_notices = []
-    # 2. 공공데이터 OpenAPI 연동 수집 (우선순위 1)
+    # 2. 공공데이터 OpenAPI 연동 수집 (최근 4시간 집중 수집)
     if service_key:
         print(" - 공공데이터 OpenAPI 연동 수집 진행...")
-        raw_notices = collector.fetch_all_openapi(num_of_rows=50, days_back=2)
+        raw_notices = collector.fetch_all_openapi(num_of_rows=500, days_back=1)
 
     # OpenAPI 키가 없거나 수집 건수가 없을 경우 시뮬레이터 활용
-    if not raw_notices and cfg.get("simulation_mode", True):
-        print(" - 시뮬레이션/샘플 데이터셋 점검...")
+    if not raw_notices and cfg.get("simulation_mode", False):
+        print(" - 시뮬레이션/샘플 데이터셋 제공...")
         raw_notices = collector.generate_mock_notices(count=10)
 
     print(f" - 수집된 원천 공고: 총 {len(raw_notices)}건")
