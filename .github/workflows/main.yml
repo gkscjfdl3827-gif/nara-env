@@ -27,7 +27,16 @@ jobs:
           DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: |
+          if [ -d "nara_env_notifier_package" ]; then cd nara_env_notifier_package; fi
           python cloud_run.py
+
+      - name: 중복 방지 DB 상태 자동 동기화
+        run: |
+          git config --global user.name "nara-bot"
+          git config --global user.email "bot@github.com"
+          git add .
+          git commit -m "Auto-update notice DB [skip ci]" || exit 0
+          git push || true
 
       - name: 중복 방지 DB 상태 자동 동기화
         run: |
