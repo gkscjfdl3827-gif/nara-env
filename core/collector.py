@@ -138,20 +138,20 @@ class NaraCollector:
                         order_inst = it.get('dmstUntyGrpNm') or it.get('pbancInstUntyGrpNm') or ''
                         announce_inst = it.get('pbancInstUntyGrpNm') or it.get('dmstUntyGrpNm') or ''
 
-                        # 상세 URL 구성 (나라장터 공식 딥링크 뷰어 적용: 404 오류 원천 차단)
+                        # 상세 URL 구성 (나라장터 공식 딥링크 뷰어 적용: 404 및 엉뚱한 화면 원천 차단)
                         if stg_cd == 'BD':
-                            # 사전규격 공식 단일 뷰어
-                            detail_url = f"https://www.g2b.go.kr/link/PNPD001_01/single/?bfSpecRgstNo={biz_no}"
+                            # 사전규격 공식 단일 뷰어 (PRVA004_02: 사전규격상세조회)
+                            detail_url = f"https://www.g2b.go.kr/link/PRVA004_02/single/?bfSpecRegNo={biz_no}"
                         elif stg_cd == 'DD':
-                            # 발주계획 공식 단일 뷰어
-                            detail_url = f"https://www.g2b.go.kr/link/PNPA001_01/single/?orderPlanNo={biz_no}"
+                            # 발주계획 공식 단일 뷰어 (PRPA015_01: 발주계획상세조회)
+                            detail_url = f"https://www.g2b.go.kr/link/PRPA015_01/single/?oderPlanNo={biz_no}"
                         elif stg_cd in ['BK', 'BUK']:
                             # 입찰공고 (조달청 및 LH, 국방부 등 외부연계공고 전수 공식 단일 뷰어)
                             ext_url = it.get('bizDtlItm03', '').strip()
                             if ext_url and ext_url.startswith('http') and 'g2b.go.kr' not in ext_url:
                                 detail_url = ext_url
                             else:
-                                detail_url = f"https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbacNo={biz_no}&bidPbacOrd={biz_ord}"
+                                detail_url = f"https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo={biz_no}&bidPbancOrd={biz_ord}"
                         else:
                             detail_url = "https://www.g2b.go.kr"
 
@@ -294,7 +294,7 @@ class NaraCollector:
                         except (ValueError, TypeError):
                             budget = 0
 
-                    link = it.get('linkInstPbancLnkUrl') or f"https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo={bid_no}&bidPbancOrd={bid_seq}"
+                    link = it.get('linkInstPbancLnkUrl') or f"https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbacNo={bid_no}&bidPbacOrd={bid_seq}"
 
                     notice = BidNotice(
                         bid_no=bid_no,
