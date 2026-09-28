@@ -138,16 +138,20 @@ class NaraCollector:
                         order_inst = it.get('dmstUntyGrpNm') or it.get('pbancInstUntyGrpNm') or ''
                         announce_inst = it.get('pbancInstUntyGrpNm') or it.get('dmstUntyGrpNm') or ''
 
-                        # 상세 URL 구성
-                        ext_url = it.get('bizDtlItm03', '').strip()
-                        if ext_url and ext_url.startswith('http'):
-                            detail_url = ext_url
-                        elif stg_cd == 'BK':
-                            detail_url = f"https://www.g2b.go.kr/pn/pnp/pnpe/BidPbac/selectBidPbacDtl.do?bidPbacNo={biz_no}&bidPbacOrd={biz_ord}"
-                        elif stg_cd == 'BD':
-                            detail_url = f"https://www.g2b.go.kr/pn/pnp/pnpd/HrcspSsstndrd/selectHrcspSsstndrdDtl.do?bfSpecRgstNo={biz_no}"
+                        # 상세 URL 구성 (나라장터 공식 딥링크 뷰어 적용: 404 오류 원천 차단)
+                        if stg_cd == 'BD':
+                            # 사전규격 공식 단일 뷰어
+                            detail_url = f"https://www.g2b.go.kr/link/PNPD001_01/single/?bfSpecRgstNo={biz_no}"
                         elif stg_cd == 'DD':
-                            detail_url = f"https://www.g2b.go.kr/pn/pnp/pnpd/OrderPlan/selectOrderPlanDtl.do?orderPlanNo={biz_no}"
+                            # 발주계획 공식 단일 뷰어
+                            detail_url = f"https://www.g2b.go.kr/link/PNPA001_01/single/?orderPlanNo={biz_no}"
+                        elif stg_cd in ['BK', 'BUK']:
+                            # 입찰공고 (조달청 및 LH, 국방부 등 외부연계공고 전수 공식 단일 뷰어)
+                            ext_url = it.get('bizDtlItm03', '').strip()
+                            if ext_url and ext_url.startswith('http') and 'g2b.go.kr' not in ext_url:
+                                detail_url = ext_url
+                            else:
+                                detail_url = f"https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbacNo={biz_no}&bidPbacOrd={biz_ord}"
                         else:
                             detail_url = "https://www.g2b.go.kr"
 
