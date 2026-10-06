@@ -68,7 +68,8 @@ class NaraCollector:
             'Referer': f'{self.G2B_BASE}/'
         }
 
-        today = datetime.now()
+        kst = timezone(timedelta(hours=9))
+        today = datetime.now(kst)
         from_dt = (today - timedelta(days=days_back)).strftime('%Y%m%d')
         to_dt = today.strftime('%Y%m%d')
 
@@ -212,7 +213,8 @@ class NaraCollector:
                 'Usr-Id': 'null'
             }
 
-            today = datetime.now()
+            kst = timezone(timedelta(hours=9))
+            today = datetime.now(kst)
             from_dt = (today - timedelta(days=days_back)).strftime('%Y%m%d')
             to_dt = today.strftime('%Y%m%d')
 
@@ -294,7 +296,7 @@ class NaraCollector:
                         except (ValueError, TypeError):
                             budget = 0
 
-                    link = it.get('linkInstPbancLnkUrl') or f"https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbacNo={bid_no}&bidPbacOrd={bid_seq}"
+                    link = it.get('linkInstPbancLnkUrl') or f"https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo={bid_no}&bidPbancOrd={bid_seq}"
 
                     notice = BidNotice(
                         bid_no=bid_no,
