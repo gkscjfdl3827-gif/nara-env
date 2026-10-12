@@ -149,8 +149,11 @@ class NaraCollector:
                         elif stg_cd in ['BK', 'BUK']:
                             # 입찰공고 (조달청 및 LH, 국방부 등 외부연계공고 전수 공식 단일 뷰어)
                             ext_url = it.get('bizDtlItm03', '').strip()
-                            if ext_url and ext_url.startswith('http') and 'g2b.go.kr' not in ext_url:
+                            if ext_url and ext_url.startswith('http') and 'g2b.go.kr' not in ext_url and not ext_url.rstrip('/').endswith('.net'):
                                 detail_url = ext_url
+                            elif it.get('prcmMaagSeNm') == '민간' or '민간' in str(it.get('prcmBsneAreaNm', '')):
+                                # 민간(재개발정비사업조합 등) 입찰공고 공식 통합검색 단일 뷰어
+                                detail_url = f"https://www.g2b.go.kr/link/FIUA009_01/single/?searchKeyword={biz_no}"
                             else:
                                 detail_url = f"https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo={biz_no}&bidPbancOrd={biz_ord}"
                         else:
@@ -296,7 +299,12 @@ class NaraCollector:
                         except (ValueError, TypeError):
                             budget = 0
 
-                    link = it.get('linkInstPbancLnkUrl') or f"https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo={bid_no}&bidPbancOrd={bid_seq}"
+                    if it.get('linkInstPbancLnkUrl'):
+                        link = it.get('linkInstPbancLnkUrl')
+                    elif it.get('prcmMaagSeNm') == '민간' or '민간' in str(it.get('prcmBsneSeCdNm', '')) or '민간' in str(it.get('prcmBsneAreaNm', '')):
+                        link = f"https://www.g2b.go.kr/link/FIUA009_01/single/?searchKeyword={bid_no}"
+                    else:
+                        link = f"https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo={bid_no}&bidPbancOrd={bid_seq}"
 
                     notice = BidNotice(
                         bid_no=bid_no,
