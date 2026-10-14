@@ -53,6 +53,66 @@ class NaraCollector:
         except (ValueError, TypeError):
             return 0
 
+    def _fetch_oder_plan_budget(self, oder_plan_no: str) -> int:
+        """발주계획 상세 페이지에서 실제 예산액을 단일 뷰어 세션을 통해 조회"""
+        if not oder_plan_no:
+            return 0
+        try:
+            s = requests.Session()
+            s.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            })
+            url_single = f"https://www.g2b.go.kr/link/PRPA015_01/single/?oderPlanNo={oder_plan_no}"
+            s.get(url_single, timeout=4)
+            s.headers.update({
+                'Accept': 'application/json',
+                'Content-Type': 'application/json;charset=UTF-8',
+                'Menu-Info': json.dumps({"menuNo":"01033","menuCangVal":"PRPA015_01","bsneClsfCd":"%EC%97%85130025","scrnNo":"06750"}),
+                'Referer': url_single,
+                'submissionid': 'mf_wfm_container_sbmSrch'
+            })
+            payload = {'dlParamM': {'oderPlanNo': oder_plan_no, 'resultCnt': ''}}
+            r = s.post('https://www.g2b.go.kr/pr/prp/prpa/OderPlan/selectOderPlan.do', json=payload, timeout=4)
+            if r.status_code == 200:
+                d = r.json().get('dlOderPlanM', {})
+                amt = d.get('bgtSumAmt') or d.get('srvBgtAmt') or d.get('oderSumAmt')
+                if amt:
+                    return int(float(amt))
+        except Exception:
+            pass
+        return 0
+
+    def _fetch_bf_spec_budget(self, bf_spec_no: str) -> int:
+        """사전규격 상세 페이지에서 실제 배정예산액을 단일 뷰어 세션을 통해 조회"""
+        if not bf_spec_no:
+            return 0
+        try:
+            s = requests.Session()
+            s.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            })
+            url_single = f"https://www.g2b.go.kr/link/PRVA004_02/single/?bfSpecRegNo={bf_spec_no}"
+            s.get(url_single, timeout=4)
+            s.headers.update({
+                'Accept': 'application/json',
+                'Content-Type': 'application/json;charset=UTF-8',
+                'Menu-Info': json.dumps({"menuNo":"01141","menuCangVal":"PRVA004_02","bsneClsfCd":"%EC%97%85130025","scrnNo":"05800"}),
+                'Referer': url_single,
+                'submissionid': 'mf_wfm_container_sbmSrch'
+            })
+            payload = {"dlParamM": {"bfSpecRegNo": bf_spec_no, "prcmBsneSeCd": "", "opnnSqno": "", "jobType": ""}}
+            r = s.post('https://www.g2b.go.kr/pn/pnz/pnza/BfSpec/selectBfSpec.do', json=payload, timeout=4)
+            if r.status_code == 200:
+                d = r.json().get('dlBfSpecM', {})
+                amt = d.get('alotBgtPrspAmt') or d.get('asgnBgtAmt')
+                if amt:
+                    return int(float(amt))
+        except Exception:
+            pass
+        return 0
+
     def fetch_from_unty_search(self, days_back: int = 3) -> List[BidNotice]:
         """
         나라장터 차세대 통합검색(UntySrch)을 통해
@@ -132,8 +192,13 @@ class NaraCollector:
                         elif stg_cd == 'BD':
                             close_date = "의견수렴 기간 (통상 5일간)"
 
-                        # 예산 파싱
+                        # 예산 파싱 (검색 목록에서 0으로 누락되는 사전규격/발주계획은 상세 API 연동을 통해 실제 예산액 전수 보강)
                         budget = self._parse_int(it.get('pbancSrchItm03')) or self._parse_int(it.get('ctrtAmt'))
+                        if not budget:
+                            if stg_cd == 'DD':
+                                budget = self._fetch_oder_plan_budget(biz_no)
+                            elif stg_cd == 'BD':
+                                budget = self._fetch_bf_spec_budget(biz_no)
 
                         # 기관명
                         order_inst = it.get('dmstUntyGrpNm') or it.get('pbancInstUntyGrpNm') or ''
