@@ -37,8 +37,12 @@ def run_cloud_check():
 
     db_path = os.path.join(os.path.dirname(__file__), "nara_notices.db")
     storage = NoticeStorage(db_path=db_path)
-    notifier = MultiChannelNotifier(config=notifier_cfg)
-    env_filter = EnvironmentalFilter()
+    custom_kws = cfg.get("custom_keywords")
+    custom_ex_kws = cfg.get("custom_exclude_keywords")
+    env_filter = EnvironmentalFilter(
+        keywords=custom_kws if custom_kws else None,
+        exclude_keywords=custom_ex_kws if custom_ex_kws else None
+    )
     collector = NaraCollector(service_key=service_key)
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
