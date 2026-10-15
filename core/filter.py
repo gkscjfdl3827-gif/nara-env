@@ -30,9 +30,9 @@ DEFAULT_TARGET_KEYWORDS = [
 DEFAULT_ENV_CATEGORIES = DEFAULT_TARGET_CATEGORIES
 DEFAULT_ENV_KEYWORDS = DEFAULT_TARGET_KEYWORDS
 
-# 제외 키워드 (단순 소모품 또는 타 분야 오탐 방지)
+# 제외 키워드 (비대상 과업 및 단순 소모품/타 분야 오탐 방지)
 DEFAULT_EXCLUDE_KEYWORDS = [
-    "종량제봉투", "쓰레기봉투", "화장지", "청소용품", "사무용품"
+    "해양환경", "종량제봉투", "쓰레기봉투", "화장지", "청소용품", "사무용품"
 ]
 
 class EnvironmentalFilter:
@@ -58,14 +58,15 @@ class EnvironmentalFilter:
         """
         공고명(title), 발주처 등을 검토하여 사용자가 원하는 4대 환경영향평가 공고인지 정밀 판별합니다.
         """
-        text_to_check = f"{notice.title} {notice.order_agency} {notice.announce_agency} {notice.category}"
+        # 1. 제외 키워드 검사 (공고명 기준: '해양환경', '종량제봉투' 등 비대상 과업/품목 즉시 배제)
+        title_normalized = re.sub(r'\s+', '', notice.title).lower()
+        title_for_ex = title_normalized.replace('해양환경공단', '')
+        for ex_kw in self.exclude_keywords:
+            ex_kw_clean = re.sub(r'\s+', '', ex_kw).lower()
+            if ex_kw_clean and ex_kw_clean in title_for_ex:
+                return False, [], ""
 
-        # 1. 제외 키워드 검사 (단, 사용자의 핵심 공고명이 직접 들어있으면 제외하지 않음)
-        has_core_keyword = any(core_kw in notice.title for core_kw in ["환경영향평가", "환경영향조사", "전략환경", "소규모환경", "사후환경"])
-        if not has_core_keyword:
-            for ex_kw in self.exclude_keywords:
-                if ex_kw.lower() in text_to_check.lower():
-                    return False, [], ""
+        text_to_check = f"{notice.title} {notice.order_agency} {notice.announce_agency} {notice.category}"
 
         # 2. 키워드 매칭 (길이가 긴 단어 우선 매칭)
         matched: List[str] = []
