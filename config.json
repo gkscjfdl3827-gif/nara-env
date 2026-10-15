@@ -4,6 +4,7 @@
   "data_go_kr_service_key": "2726a616e40fd7b9939e11900df031c53037acaf9de7fd7cbbc70e1f5f4de06d",
   "use_ntfy": true,
   "ntfy_topic": "nara-env-alert-myphone",
+  "alio_ntfy_topic": "alio-env-alert-myphone",
   "use_telegram": false,
   "telegram_bot_token": "",
   "telegram_chat_id": "",

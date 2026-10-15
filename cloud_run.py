@@ -1,8 +1,17 @@
 import os
 import sys
 import json
+import shutil
 import sqlite3
 from datetime import datetime
+
+# Windows 콘솔 인코딩 안전 처리
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 from core.models import BidNotice
 from core.filter import EnvironmentalFilter
@@ -15,6 +24,11 @@ def run_cloud_check():
     클라우드(GitHub Actions / 무료 서버)에서 컴퓨터 없이 24시간 실행되는 수집기
     환경 변수(Secrets) 또는 config.json을 자동으로 감지합니다.
     """
+    # 실수로 바깥 폴더째 업로드된 하위 폴더가 있으면 자동 정리
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    mistaken_dir = os.path.join(base_dir, "나라장터_알리오_통합_깃허브업로드본")
+    if os.path.isdir(mistaken_dir):
+        shutil.rmtree(mistaken_dir, ignore_errors=True)
     # 1. 설정 로드 (GitHub Secrets 환경변수 우선, 없으면 config.json)
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
     cfg = {}
@@ -37,6 +51,7 @@ def run_cloud_check():
 
     db_path = os.path.join(os.path.dirname(__file__), "nara_notices.db")
     storage = NoticeStorage(db_path=db_path)
+    notifier = MultiChannelNotifier(config=notifier_cfg)
     custom_kws = cfg.get("custom_keywords")
     custom_ex_kws = cfg.get("custom_exclude_keywords")
     env_filter = EnvironmentalFilter(
@@ -78,7 +93,15 @@ def run_cloud_check():
         new_alerts += 1
         print(f"  [새 알림 전송] [{notice.stage}] [{cat_name}] {notice.title} (결과: {results})")
 
-    print(f"[{now_str}] 클라우드 검사 완료: 신규 알림 {new_alerts}건 발송됨.")
+    print(f"[{now_str}] 클라우드 나라장터 검사 완료: 신규 알림 {new_alerts}건 발송됨.")
+
+    # 3. 알리오(ALIO) 공공기관 입찰공고 독립 검사 (기존 나라장터와 DB 및 ntfy 토픽 완전 분리)
+    try:
+        from core.alio_collector import run_alio_cloud_check
+        run_alio_cloud_check(cfg)
+    except Exception as e:
+        print(f"[ALIO] 알리오 검사 중 예외 발생 (나라장터 정상 작동 유지): {e}")
+
     return new_alerts
 
 if __name__ == "__main__":
