@@ -3,6 +3,10 @@ name: Nara Environmental Notice Cloud Monitor
 on:
   workflow_dispatch: # cron-job.org에서 2~3분마다 단독 호출
 
+concurrency:
+  group: nara-env-cloud-monitor
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -34,7 +38,6 @@ jobs:
         run: |
           git config --global user.name "nara-bot"
           git config --global user.email "bot@github.com"
-          git pull --rebase || true
-          git add .
+          git add nara_notices.db config.json
           git commit -m "Auto-update notice DB [skip ci]" || exit 0
-          git push || true
+          git push origin main || (git pull --rebase -X theirs origin main && git push origin main) || true
