@@ -1,17 +1,9 @@
 import os
 import sys
 import json
-import shutil
 import sqlite3
+import requests
 from datetime import datetime
-
-# Windows 콘솔 인코딩 안전 처리
-if hasattr(sys.stdout, "reconfigure"):
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
 
 from core.models import BidNotice
 from core.filter import EnvironmentalFilter
@@ -24,11 +16,6 @@ def run_cloud_check():
     클라우드(GitHub Actions / 무료 서버)에서 컴퓨터 없이 24시간 실행되는 수집기
     환경 변수(Secrets) 또는 config.json을 자동으로 감지합니다.
     """
-    # 실수로 바깥 폴더째 업로드된 하위 폴더가 있으면 자동 정리
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    mistaken_dir = os.path.join(base_dir, "나라장터_알리오_통합_깃허브업로드본")
-    if os.path.isdir(mistaken_dir):
-        shutil.rmtree(mistaken_dir, ignore_errors=True)
     # 1. 설정 로드 (GitHub Secrets 환경변수 우선, 없으면 config.json)
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
     cfg = {}
@@ -51,7 +38,6 @@ def run_cloud_check():
 
     db_path = os.path.join(os.path.dirname(__file__), "nara_notices.db")
     storage = NoticeStorage(db_path=db_path)
-    notifier = MultiChannelNotifier(config=notifier_cfg)
     custom_kws = cfg.get("custom_keywords")
     custom_ex_kws = cfg.get("custom_exclude_keywords")
     env_filter = EnvironmentalFilter(
@@ -63,6 +49,28 @@ def run_cloud_check():
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{now_str}] 클라우드 나라장터 환경영향평가 모니터링 시작...")
     print(f" - 알림 채널(ntfy 토픽): {ntfy_topic}")
+
+    # ntfy 최근 발송 내역 사전 폴링 (러너 동시 실행 또는 DB 동기화 지연 시 이중 알림 완벽 방어)
+    recent_sent_signatures = set()
+    if ntfy_topic:
+        try:
+            poll_url = f"https://ntfy.sh/{ntfy_topic}/json?poll=1&since=45m"
+            req = requests.get(poll_url, timeout=5)
+            if req.status_code == 200:
+                for line in req.text.splitlines():
+                    try:
+                        d = json.loads(line)
+                        if d.get("event") == "message":
+                            title_text = d.get("title", "")
+                            click_url = d.get("click", "")
+                            recent_sent_signatures.add(title_text)
+                            if click_url:
+                                recent_sent_signatures.add(click_url)
+                    except Exception:
+                        pass
+                print(f" - 최근 45분간 ntfy 발송 시그니처 {len(recent_sent_signatures)}건 적재 (실시간 중복 방어 활성화)")
+        except Exception as e:
+            print(f" - ntfy 중복 방어 사전 조회 스킵: {e}")
 
     raw_notices = []
     # 2. 나라장터 차세대 통합 수집 (LH, 국방부, 한전 등 외부 연계공고 전수 포함)
@@ -82,9 +90,20 @@ def run_cloud_check():
         if not is_env:
             continue
 
-        # 중복 발송 방지
+        # 중복 발송 방지 1: 로컬 SQLite DB 확인
         if storage.is_already_seen(notice.unique_id):
             continue
+
+        # 중복 발송 방지 2: 최근 ntfy 실시간 발송 이력 검증 (동시 러너 이중 발송 방어)
+        if recent_sent_signatures:
+            if notice.detail_url and notice.detail_url in recent_sent_signatures:
+                print(f"  [중복 알림 억제] 상세링크 일치: {notice.title}")
+                storage.save_notice(notice, notified=True)
+                continue
+            if any((notice.bid_no and notice.bid_no in sig) or notice.title in sig for sig in recent_sent_signatures):
+                print(f"  [중복 알림 억제] 공고번호/제목 일치: {notice.title}")
+                storage.save_notice(notice, notified=True)
+                continue
 
         # 저장 및 푸시 발송
         storage.save_notice(notice, notified=False)
@@ -93,15 +112,7 @@ def run_cloud_check():
         new_alerts += 1
         print(f"  [새 알림 전송] [{notice.stage}] [{cat_name}] {notice.title} (결과: {results})")
 
-    print(f"[{now_str}] 클라우드 나라장터 검사 완료: 신규 알림 {new_alerts}건 발송됨.")
-
-    # 3. 알리오(ALIO) 공공기관 입찰공고 독립 검사 (기존 나라장터와 DB 및 ntfy 토픽 완전 분리)
-    try:
-        from core.alio_collector import run_alio_cloud_check
-        run_alio_cloud_check(cfg)
-    except Exception as e:
-        print(f"[ALIO] 알리오 검사 중 예외 발생 (나라장터 정상 작동 유지): {e}")
-
+    print(f"[{now_str}] 클라우드 검사 완료: 신규 알림 {new_alerts}건 발송됨.")
     return new_alerts
 
 if __name__ == "__main__":
