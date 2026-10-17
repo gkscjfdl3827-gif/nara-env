@@ -36,6 +36,8 @@ def run_cloud_check():
         "telegram_chat_id": tg_chat_id
     }
 
+    notifier = MultiChannelNotifier(notifier_cfg)
+
     db_path = os.path.join(os.path.dirname(__file__), "nara_notices.db")
     storage = NoticeStorage(db_path=db_path)
     custom_kws = cfg.get("custom_keywords")
