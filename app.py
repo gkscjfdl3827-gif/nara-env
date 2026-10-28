@@ -98,7 +98,7 @@ with st.sidebar:
 
 # 메인 헤더
 st.title("🌿 나라장터 환경영향평가 실시간 스마트폰 알리미")
-st.markdown("🎯 **1. 사전규격 | 2. 발주계획 | 3. 입찰공고** 공공조달 3대 전주기 실시간 모니터링 (LH, 국방부, 한전 등 외부연계기관 100% 전수 포함)")
+st.markdown("🎯 **1. 계약요청 | 2. 발주계획 | 3. 사전규격 | 4. 입찰공고** 공공조달 4대 전주기 실시간 모니터링 (LH, 국방부, 한전 등 외부연계기관 100% 전수 포함)")
 
 # 탭 메뉴 구성
 tab1, tab2, tab3 = st.tabs(["📋 감지된 공고 피드", "📱 스마트폰 알림 연동 설정", "⚙️ 타겟 키워드 및 API 설정"])
@@ -106,7 +106,7 @@ tab1, tab2, tab3 = st.tabs(["📋 감지된 공고 피드", "📱 스마트폰 �
 with tab1:
     col_filter1, col_filter2, col_filter3 = st.columns([1.5, 1.5, 2])
     with col_filter1:
-        stage_options = ["전체 단계", "입찰공고", "사전규격", "발주계획"]
+        stage_options = ["전체 단계", "계약요청", "사전규격", "발주계획", "입찰공고"]
         selected_stage = st.selectbox("진행단계 필터", stage_options)
     with col_filter2:
         cat_options = ["전체 분야"] + list(DEFAULT_TARGET_CATEGORIES.keys())
