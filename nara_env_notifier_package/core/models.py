@@ -16,14 +16,15 @@ class BidNotice:
     post_date: str = ""       # 공고게시일시 (YYYY-MM-DD HH:MM)
     close_date: str = ""      # 입찰마감일시 (YYYY-MM-DD HH:MM)
     detail_url: str = ""      # 나라장터 공고 상세 링크
+    stage: str = "입찰공고"     # 단계 (계약요청, 사전규격, 발주계획, 입찰공고)
     matched_keywords: List[str] = field(default_factory=list) # 매칭된 환경 키워드
-    env_category: str = ""    # 환경 분류 (수질, 대기, 폐기물 등)
+    env_category: str = ""    # 환경 분류 (전략환경, 소규모환경, 사후환경, 환경영향)
     raw_data: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def unique_id(self) -> str:
-        """중복 방지를 위한 고유 키"""
-        return f"{self.bid_no}-{self.bid_seq}"
+        """중복 방지를 위한 고유 키 (단계별 중복 방지: 계약요청 -> 발주계획 -> 사전규격 -> 입찰공고 각각 알림 보장)"""
+        return f"{self.stage}-{self.bid_no}-{self.bid_seq}"
 
     @property
     def formatted_budget(self) -> str:
