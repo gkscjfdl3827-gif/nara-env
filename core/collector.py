@@ -135,6 +135,7 @@ class NaraCollector:
 
         keywords = ['환경영향', '전략환경', '소규모환경', '사후환경']
         stage_targets = [
+            ('DC', '계약요청'),
             ('BD', '사전규격'),
             ('DD', '발주계획'),
             ('BK', '입찰공고'),
@@ -187,13 +188,15 @@ class NaraCollector:
                                 close_date = f"발주예정: {ym[:4]}년 {ym[4:6]}월"
                             else:
                                 close_date = f"발주예정: {ym}"
+                        elif stg_cd == 'DC':
+                            close_date = "접수/검토 중"
                         elif it.get('pbancSrchItm02'):
                             close_date = self._format_date(it.get('pbancSrchItm02'))
                         elif stg_cd == 'BD':
                             close_date = "의견수렴 기간 (통상 5일간)"
 
                         # 예산 파싱 (검색 목록에서 0으로 누락되는 사전규격/발주계획은 상세 API 연동을 통해 실제 예산액 전수 보강)
-                        budget = self._parse_int(it.get('pbancSrchItm03')) or self._parse_int(it.get('ctrtAmt'))
+                        budget = self._parse_int(it.get('dmndSrchItm02')) or self._parse_int(it.get('dmndSrchItm03')) or self._parse_int(it.get('pbancSrchItm03')) or self._parse_int(it.get('ctrtAmt'))
                         if not budget:
                             if stg_cd == 'DD':
                                 budget = self._fetch_oder_plan_budget(biz_no)
@@ -211,6 +214,9 @@ class NaraCollector:
                         elif stg_cd == 'DD':
                             # 발주계획 공식 단일 뷰어 (PRPA015_01: 발주계획상세조회)
                             detail_url = f"https://www.g2b.go.kr/link/PRPA015_01/single/?oderPlanNo={biz_no}"
+                        elif stg_cd == 'DC':
+                            # 계약요청 공식 단일 뷰어 (FIUA027_01: 통합검색 상세 화면)
+                            detail_url = f"https://www.g2b.go.kr/link/FIUA027_01/single/?srchName=dmndsttus&ctrtDmndRcptNo={biz_no}&ctrtDmndRcptOrd={biz_ord}"
                         elif stg_cd in ['BK', 'BUK']:
                             # 입찰공고 (조달청 및 LH, 국방부 등 외부연계공고 전수 공식 단일 뷰어)
                             ext_url = it.get('bizDtlItm03', '').strip()
