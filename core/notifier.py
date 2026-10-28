@@ -40,7 +40,11 @@ class MultiChannelNotifier:
         stage = getattr(notice, 'stage', '입찰공고') or '입찰공고'
         
         # 단계별 차별화 아이콘 및 태그
-        if stage == "사전규격":
+        if stage == "계약요청":
+            icon = "📝"
+            stage_tags = ["memo", "inbox_tray", "bell"]
+            action_label = "계약요청 바로가기"
+        elif stage == "사전규격":
             icon = "📐"
             stage_tags = ["straight_ruler", "clipboard", "bell"]
             action_label = "사전규격 바로가기"
