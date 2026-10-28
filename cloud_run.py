@@ -35,8 +35,7 @@ def run_cloud_check():
         "telegram_bot_token": tg_token,
         "telegram_chat_id": tg_chat_id
     }
-
-    notifier = MultiChannelNotifier(notifier_cfg)
+    notifier = MultiChannelNotifier(config=notifier_cfg)
 
     db_path = os.path.join(os.path.dirname(__file__), "nara_notices.db")
     storage = NoticeStorage(db_path=db_path)
