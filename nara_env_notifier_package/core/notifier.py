@@ -12,17 +12,18 @@ class MultiChannelNotifier:
     def format_message(self, notice: BidNotice) -> str:
         """알림용 텍스트 메시지 생성"""
         keywords_str = ", ".join(notice.matched_keywords) if notice.matched_keywords else "환경"
+        stage_title = f"🌿 [나라장터 {notice.stage} 알림]"
         msg = (
-            f"🌿 [나라장터 환경 공고 알림]\n"
+            f"{stage_title}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"📌 공고명: {notice.title}\n"
+            f"📌 건명: {notice.title}\n"
             f"🏢 발주기관: {notice.order_agency or notice.announce_agency}\n"
-            f"🏷 분류: [{notice.env_category}] ({notice.category})\n"
+            f"🏷 분류: [{notice.stage}] - [{notice.env_category}] ({notice.category})\n"
             f"💰 배정예산: {notice.formatted_budget}\n"
             f"⏰ 마감일시: {notice.close_date or '마감일 미정'}\n"
             f"🔍 매칭키워드: {keywords_str}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"🔗 공고 상세확인:\n{notice.detail_url or 'https://www.g2b.go.kr'}"
+            f"🔗 상세확인:\n{notice.detail_url or 'https://www.g2b.go.kr'}"
         )
         return msg
 
@@ -36,11 +37,31 @@ class MultiChannelNotifier:
             return False
 
         url = "https://ntfy.sh"
-        title = f"🌿 [환경공고] {notice.env_category}: {notice.title}"
+        stage = getattr(notice, 'stage', '입찰공고') or '입찰공고'
+        
+        # 단계별 차별화 아이콘 및 태그
+        if stage == "계약요청":
+            icon = "📝"
+            stage_tags = ["memo", "inbox_tray", "bell"]
+            action_label = "계약요청 바로가기"
+        elif stage == "사전규격":
+            icon = "📐"
+            stage_tags = ["straight_ruler", "clipboard", "bell"]
+            action_label = "사전규격 바로가기"
+        elif stage == "발주계획":
+            icon = "📋"
+            stage_tags = ["calendar", "memo", "bell"]
+            action_label = "발주계획 바로가기"
+        else: # 입찰공고
+            icon = "📢"
+            stage_tags = ["loudspeaker", "leaves", "bell"]
+            action_label = "입찰공고 바로가기"
+
+        title = f"{icon} [{stage}] {notice.env_category}: {notice.title}"
         body = (
             f"🏛️ 발주: {notice.order_agency or notice.announce_agency}\n"
-            f"💰 예산: {notice.formatted_budget} | ⏰ 마감: {notice.close_date}\n"
-            f"🔍 매칭: {', '.join(notice.matched_keywords)}"
+            f"💰 예산: {notice.formatted_budget} | ⏰ 마감: {notice.close_date or '마감일 미정'}\n"
+            f"🔍 키워드: {', '.join(notice.matched_keywords)}"
         )
 
         payload = {
@@ -48,7 +69,7 @@ class MultiChannelNotifier:
             "title": title,
             "message": body,
             "priority": 4,
-            "tags": ["earth_africa", "leaves", "bell"]
+            "tags": stage_tags
         }
 
         if notice.detail_url:
@@ -56,7 +77,7 @@ class MultiChannelNotifier:
             payload["actions"] = [
                 {
                     "action": "view",
-                    "label": "공고 바로가기",
+                    "label": action_label,
                     "url": notice.detail_url
                 }
             ]
@@ -83,11 +104,11 @@ class MultiChannelNotifier:
             "disable_web_page_preview": False
         }
 
-        # 인라인 버튼 추가 (공고 바로가기)
+        # 인라인 버튼 추가 (상세 바로가기)
         if notice.detail_url:
             payload["reply_markup"] = {
                 "inline_keyboard": [
-                    [{"text": "🌐 나라장터 공고 바로가기", "url": notice.detail_url}]
+                    [{"text": f"🌐 나라장터 {notice.stage} 바로가기", "url": notice.detail_url}]
                 ]
             }
 
@@ -105,11 +126,11 @@ class MultiChannelNotifier:
             return False
 
         embed = {
-            "title": f"🌿 [환경공고] {notice.title}",
+            "title": f"🌿 [{notice.stage}] [{notice.env_category}] {notice.title}",
             "url": notice.detail_url or "https://www.g2b.go.kr",
             "color": 3066993, # 녹색 계열
             "fields": [
-                {"name": "분류 / 카테고리", "value": f"{notice.env_category} ({notice.category})", "inline": True},
+                {"name": "단계 / 분류", "value": f"[{notice.stage}] {notice.env_category} ({notice.category})", "inline": True},
                 {"name": "발주 / 수요기관", "value": notice.order_agency or notice.announce_agency or "-", "inline": True},
                 {"name": "배정 예산", "value": notice.formatted_budget, "inline": True},
                 {"name": "입찰 마감일시", "value": notice.close_date or "-", "inline": True},
