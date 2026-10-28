@@ -98,49 +98,58 @@ with st.sidebar:
 
 # 메인 헤더
 st.title("🌿 나라장터 환경영향평가 실시간 스마트폰 알리미")
-st.markdown("🎯 **전략환경영향평가 | 소규모환경영향평가 | 환경영향평가 | 사후환경영향조사** 신규 공고 발생 시 **핸드폰으로 즉시 소리/진동 알람**을 발송합니다.")
+st.markdown("🎯 **1. 계약요청 | 2. 발주계획 | 3. 사전규격 | 4. 입찰공고** 공공조달 4대 전주기 실시간 모니터링 (LH, 국방부, 한전 등 외부연계기관 100% 전수 포함)")
 
 # 탭 메뉴 구성
 tab1, tab2, tab3 = st.tabs(["📋 감지된 공고 피드", "📱 스마트폰 알림 연동 설정", "⚙️ 타겟 키워드 및 API 설정"])
 
 with tab1:
-    col_filter1, col_filter2 = st.columns([2, 1])
+    col_filter1, col_filter2, col_filter3 = st.columns([1.5, 1.5, 2])
     with col_filter1:
-        cat_options = ["전체"] + list(DEFAULT_TARGET_CATEGORIES.keys())
-        selected_cat = st.selectbox("카테고리 필터", cat_options)
+        stage_options = ["전체 단계", "계약요청", "사전규격", "발주계획", "입찰공고"]
+        selected_stage = st.selectbox("진행단계 필터", stage_options)
     with col_filter2:
-        search_query = st.text_input("공고명 / 기관명 검색", placeholder="예: 천안시, 사후환경")
+        cat_options = ["전체 분야"] + list(DEFAULT_TARGET_CATEGORIES.keys())
+        selected_cat = st.selectbox("환경분야 필터", cat_options)
+    with col_filter3:
+        search_query = st.text_input("공고명 / 기관명 검색", placeholder="예: 천안시, LH, 사후환경")
 
-    notices = storage.get_recent_notices(limit=100, env_category=selected_cat)
+    notices = storage.get_recent_notices(limit=100, env_category=None if selected_cat == "전체 분야" else selected_cat)
+
+    if selected_stage != "전체 단계":
+        notices = [n for n in notices if (n.get('stage') or '입찰공고') == selected_stage]
 
     if search_query:
-        notices = [n for n in notices if search_query.lower() in n['title'].lower() or search_query.lower() in (n.get('order_agency') or '').lower()]
+        notices = [n for n in notices if search_query.lower() in n['title'].lower() or search_query.lower() in (n.get('order_agency') or '').lower() or search_query.lower() in (n.get('announce_agency') or '').lower()]
 
-    st.markdown(f"**총 {len(notices)}건의 환경 공고가 등록되어 있습니다.**")
+    st.markdown(f"**총 {len(notices)}건의 환경 건이 등록되어 있습니다.**")
 
     if not notices:
-        st.info("💡 아직 수집된 공고가 없습니다. 왼쪽 사이드바의 **[지금 즉시 나라장터 수집 & 알림]** 버튼을 눌러보세요!")
+        st.info("💡 아직 수집된 공고/규격/계획이 없습니다. 왼쪽 사이드바의 **[지금 즉시 나라장터 수집 & 알림]** 버튼을 눌러보세요!")
     else:
         for item in notices:
+            stage_val = item.get('stage') or '입찰공고'
+            stage_icon = "📐" if stage_val == "사전규격" else ("📋" if stage_val == "발주계획" else "📢")
             with st.container():
                 st.markdown(f"""
                 <div class="notice-card">
-                    <div class="notice-title">{item['title']}</div>
+                    <div class="notice-title">[{stage_val}] {item['title']}</div>
                     <div style="margin-bottom: 8px;">
+                        <span class="badge" style="background:#0284c7;color:#fff;">{stage_icon} {stage_val}</span>
                         <span class="badge badge-category">📁 {item.get('env_category', '환경')}</span>
-                        <span class="badge badge-category">📋 {item.get('category', '공고')}</span>
+                        <span class="badge badge-category">🏷 {item.get('category', '기술용역')}</span>
                         <span class="badge badge-keyword">🔍 {' / '.join(item.get('matched_keywords', []))}</span>
                     </div>
                     <div class="notice-meta">
                         🏛️ <b>발주기관:</b> {item.get('order_agency') or item.get('announce_agency') or '-'}<br/>
                         💰 <b>배정예산:</b> {f"{item.get('budget'):,}원" if item.get('budget') else '금액 정보 없음'} | 🤝 <b>계약방법:</b> {item.get('contract_method') or '-'}<br/>
-                        📅 <b>공고일시:</b> {item.get('post_date') or '-'} | ⏰ <b>마감일시:</b> {item.get('close_date') or '-'}
+                        📅 <b>등록일시:</b> {item.get('post_date') or '-'} | ⏰ <b>마감일시:</b> {item.get('close_date') or '마감일 미정'}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
                 
                 url = item.get("detail_url") or "https://www.g2b.go.kr"
-                st.link_button("🌐 나라장터 상세공고 원문 바로가기", url)
+                st.link_button(f"🌐 나라장터 {stage_val} 원문 바로가기", url)
                 st.write("")
 
 with tab2:
