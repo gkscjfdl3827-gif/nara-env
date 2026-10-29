@@ -4,10 +4,13 @@ import ssl
 import json
 import sqlite3
 import contextlib
-import urllib.request
 import urllib.parse
+import requests
+import urllib3
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from .filter import EnvironmentalFilter, DEFAULT_TARGET_CATEGORIES
 
@@ -55,7 +58,6 @@ class EiaaNoticeStorage:
             cursor.execute("SELECT 1 FROM notices WHERE unique_id = ? LIMIT 1", (unique_id,))
             if cursor.fetchone():
                 return True
-            # 제목 + 일자 보조 중복 검사
             cursor.execute("SELECT 1 FROM notices WHERE title = ? AND post_date = ? LIMIT 1", (title, post_date))
             return cursor.fetchone() is not None
 
@@ -98,7 +100,7 @@ class EiaaNoticeStorage:
 
 
 class EiaaCollector:
-    """(사)환경영향평가협회 입찰정보 수집기"""
+    """(사)환경영향평가협회 입찰정보 수집기 (requests 기반 고신뢰성 엔진)"""
 
     BASE_URL = "https://eiaa.or.kr"
     LIST_URL = "https://eiaa.or.kr/page/s5/s11.php"
@@ -107,96 +109,68 @@ class EiaaCollector:
     def __init__(self, user_id: str = "", user_pw: str = ""):
         self.user_id = user_id
         self.user_pw = user_pw
-        self.cookies: Dict[str, str] = {}
-        self.headers = {
+        self.session = requests.Session()
+        self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
             "Referer": "https://eiaa.or.kr/page/s5/s11.php"
-        }
-        self.ssl_ctx = ssl.create_default_context()
-        self.ssl_ctx.check_hostname = False
-        self.ssl_ctx.verify_mode = ssl.CERT_NONE
+        })
 
     def login(self) -> Tuple[bool, str]:
         """협회 세션 로그인 수행"""
         if not self.user_id or not self.user_pw:
             return False, "아이디 또는 비밀번호 미설정"
 
-        data = urllib.parse.urlencode({
+        data = {
             "mode": "login",
             "pcd": "",
             "userid": self.user_id,
             "userpw": self.user_pw,
             "is_memory": "y"
-        }).encode("utf-8")
+        }
+        headers = {
+            "Origin": "https://eiaa.or.kr",
+            "Referer": "https://eiaa.or.kr/page/mb/login.php?prepage=%2Fpage%2Fs5%2Fs11.php",
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
 
-        headers = dict(self.headers)
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
-        headers["Referer"] = "https://eiaa.or.kr/page/mb/login.php?prepage=%2Fpage%2Fs5%2Fs11.php"
-
-        req = urllib.request.Request(self.LOGIN_URL, data=data, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, context=self.ssl_ctx, timeout=10) as resp:
-                body = resp.read().decode("utf-8", errors="ignore")
-                
-                # 쿠키 수집
-                cookie_headers = resp.headers.get_all("Set-Cookie") or []
-                for ch in cookie_headers:
-                    parts = ch.split(";")[0].split("=", 1)
-                    if len(parts) == 2:
-                        self.cookies[parts[0].strip()] = parts[1].strip()
-
-                if "alert(" in body:
-                    # 실패 알림 텍스트 파싱
-                    m = re.search(r"alert\('([^']+)'\)", body)
-                    err_msg = m.group(1) if m else "로그인 실패"
-                    return False, err_msg
-
-                return True, "로그인 성공"
+            resp = self.session.post(self.LOGIN_URL, data=data, headers=headers, timeout=12, verify=False)
+            body = resp.text
+            if "alert(" in body:
+                m = re.search(r"alert\('([^']+)'\)", body)
+                err_msg = m.group(1) if m else "로그인 실패"
+                return False, err_msg
+            return True, "로그인 성공"
         except Exception as e:
             return False, f"로그인 통신 오류: {e}"
 
-    def _get_cookie_str(self) -> str:
-        return "; ".join(f"{k}={v}" for k, v in self.cookies.items())
-
     def fetch_board_items(self) -> List[Dict[str, Any]]:
         """입찰정보 게시판 목록 크롤링"""
-        if not self.cookies and self.user_id and self.user_pw:
+        if 'PHPSESSID' not in self.session.cookies and self.user_id and self.user_pw:
             ok, msg = self.login()
             if not ok:
                 print(f"[EiaaCollector] 협회 초기 로그인 실패: {msg}")
                 return []
 
-        headers = dict(self.headers)
-        if self.cookies:
-            headers["Cookie"] = self._get_cookie_str()
-
-        req = urllib.request.Request(self.LIST_URL, headers=headers)
         try:
-            with urllib.request.urlopen(req, context=self.ssl_ctx, timeout=12) as resp:
-                # 쿠키 업데이트
-                for ch in (resp.headers.get_all("Set-Cookie") or []):
-                    parts = ch.split(";")[0].split("=", 1)
-                    if len(parts) == 2:
-                        self.cookies[parts[0].strip()] = parts[1].strip()
-
-                html = resp.read().decode("utf-8", errors="ignore")
+            resp = self.session.get(self.LIST_URL, timeout=12, verify=False)
+            html = resp.text
         except Exception as e:
             print(f"[EiaaCollector] 페이지 요청 오류: {e}")
             return []
 
-        # 로그인이 풀려 로그인 페이지로 리다이렉트 스크립트가 반환된 경우 자동 재로그인 시도
         if "login.php" in html and self.user_id and self.user_pw:
             ok, msg = self.login()
             if ok:
-                headers["Cookie"] = self._get_cookie_str()
-                req2 = urllib.request.Request(self.LIST_URL, headers=headers)
                 try:
-                    with urllib.request.urlopen(req2, context=self.ssl_ctx, timeout=12) as resp2:
-                        html = resp2.read().decode("utf-8", errors="ignore")
+                    resp2 = self.session.get(self.LIST_URL, timeout=12, verify=False)
+                    html = resp2.text
                 except Exception:
                     return []
             else:
-                print(f"[EiaaCollector] 로그인 실패: {msg}")
+                print(f"[EiaaCollector] 재로그인 실패: {msg}")
                 return []
 
         return self._parse_html(html)
@@ -233,7 +207,7 @@ class EiaaCollector:
                 "detail_url": full_url
             })
 
-        # 2. 만약 div 구조에서 안 잡혔을 경우 전통적인 <table> fallback
+        # 2. 전통적인 <table> 형태 fallback
         if not items:
             rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.DOTALL | re.IGNORECASE)
             for row in rows:
@@ -309,16 +283,14 @@ class EiaaCollector:
             "actions": actions
         }
 
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        req = urllib.request.Request(
-            "https://ntfy.sh",
-            data=data,
-            headers={"Content-Type": "application/json; charset=utf-8", "User-Agent": "EiaaNotifier/1.0"},
-            method="POST"
-        )
         try:
-            with urllib.request.urlopen(req, context=self.ssl_ctx, timeout=10) as resp:
-                return resp.status == 200
+            resp = requests.post(
+                "https://ntfy.sh",
+                json=payload,
+                headers={"User-Agent": "EiaaNotifier/1.0"},
+                timeout=10
+            )
+            return resp.status_code == 200
         except Exception as e:
             print(f"[EiaaCollector] ntfy 발송 실패: {e}")
             return False
@@ -377,8 +349,6 @@ def run_eiaa_cloud_check(cfg: Optional[Dict[str, Any]] = None) -> int:
 
         # 환경영향평가 전문 분류
         matched_kws = [k for k in env_filter.keywords if k in title or re.sub(r'\s+', '', k) in title_norm]
-        
-        # 협회 입찰정보는 기본적으로 환경영향평가 관련 게시판이므로 키워드가 없더라도 환경영향평가로 처리하거나 매칭 우선
         cat_name = "환경영향평가"
         if any(k in matched_kws for k in env_filter.category_map.get("전략환경영향평가", [])):
             cat_name = "전략환경영향평가"
@@ -390,31 +360,30 @@ def run_eiaa_cloud_check(cfg: Optional[Dict[str, Any]] = None) -> int:
         if not matched_kws:
             matched_kws = ["평가협회공고"]
 
+        # 중복 발송 방지 1: SQLite DB 검사
         if storage.is_already_seen(seq, title, post_date):
             continue
 
-        # ntfy 실시간 사전 조회 (동시 러너 병렬 실행 시 이중 발송 방어)
+        # 중복 발송 방지 2: ntfy 실시간 사전 조회 (동시 러너 병렬 실행 시 이중 발송 방어)
         if topic:
             try:
                 poll_chk_url = f"https://ntfy.sh/{topic}/json?poll=1&since=10m"
-                req_chk = urllib.request.Request(poll_chk_url, headers={"User-Agent": "EiaaNotifier/1.0"})
-                with urllib.request.urlopen(req_chk, context=collector.ssl_ctx, timeout=3) as resp_chk:
-                    if resp_chk.status == 200:
-                        lines_chk = resp_chk.read().decode("utf-8", errors="ignore").splitlines()
-                        eiaa_recent_sig = set()
-                        for l in lines_chk:
-                            try:
-                                d = json.loads(l)
-                                if d.get("event") == "message":
-                                    eiaa_recent_sig.add(d.get("title", ""))
-                                    if d.get("click"):
-                                        eiaa_recent_sig.add(d.get("click"))
-                            except Exception:
-                                pass
-                        if detail_url in eiaa_recent_sig or any(f"seq={seq}" in s for s in eiaa_recent_sig if seq):
-                            print(f"  [평가협회 중복 억제] 러너 동시 발송 감지 (seq={seq}): {title}")
-                            storage.save_notice(seq=seq, title=title, agency=agency, post_date=post_date, detail_url=detail_url, matched_keywords=matched_kws, env_category=cat_name, notified=True)
-                            continue
+                resp_chk = requests.get(poll_chk_url, headers={"User-Agent": "EiaaNotifier/1.0"}, timeout=3)
+                if resp_chk.status_code == 200:
+                    eiaa_recent_sig = set()
+                    for l in resp_chk.text.splitlines():
+                        try:
+                            d = json.loads(l)
+                            if d.get("event") == "message":
+                                eiaa_recent_sig.add(d.get("title", ""))
+                                if d.get("click"):
+                                    eiaa_recent_sig.add(d.get("click"))
+                        except Exception:
+                            pass
+                    if detail_url in eiaa_recent_sig or any(f"seq={seq}" in s for s in eiaa_recent_sig if seq):
+                        print(f"  [평가협회 중복 억제] 러너 동시 발송 감지 (seq={seq}): {title}")
+                        storage.save_notice(seq=seq, title=title, agency=agency, post_date=post_date, detail_url=detail_url, matched_keywords=matched_kws, env_category=cat_name, notified=True)
+                        continue
             except Exception:
                 pass
 
