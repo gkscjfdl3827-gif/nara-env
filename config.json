@@ -4,7 +4,6 @@
   "data_go_kr_service_key": "2726a616e40fd7b9939e11900df031c53037acaf9de7fd7cbbc70e1f5f4de06d",
   "use_ntfy": true,
   "ntfy_topic": "nara-env-alert-myphone",
-  "alio_ntfy_topic": "alio-env-alert-myphone",
   "use_telegram": false,
   "telegram_bot_token": "",
   "telegram_chat_id": "",
@@ -24,5 +23,8 @@
     "청소용품",
     "사무용품"
   ],
+  "eiaa_user_id": "dasan93",
+  "eiaa_user_pw": "dasan93!!",
+  "eiaa_ntfy_topic": "nara-env-alert-myphone",
   "simulation_mode": false
 }
