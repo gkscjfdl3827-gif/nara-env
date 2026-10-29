@@ -115,11 +115,12 @@ def run_cloud_check():
 
         if recent_sent_signatures:
             if notice.detail_url and notice.detail_url in recent_sent_signatures:
-                print(f"  [중복 알림 억제] 상세링크 일치: {notice.title}")
+                print(f"  [중복 알림 억제] 동일 나라장터 링크 일치: {notice.title}")
                 storage.save_notice(notice, notified=True)
                 continue
-            if any((notice.bid_no and notice.bid_no in sig) or notice.title in sig for sig in recent_sent_signatures):
-                print(f"  [중복 알림 억제] 공고번호/제목 일치: {notice.title}")
+            # 나라장터 자체의 동시 러너 중복만 억제 (평가협회/ALIO 공고와는 완전 독립으로 중복 수신 허용)
+            if any((notice.bid_no and notice.bid_no in sig) or (notice.title in sig and "[평가협회]" not in sig) for sig in recent_sent_signatures):
+                print(f"  [중복 알림 억제] 동일 나라장터 공고번호/제목 일치: {notice.title}")
                 storage.save_notice(notice, notified=True)
                 continue
 
