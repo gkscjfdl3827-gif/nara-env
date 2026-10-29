@@ -353,6 +353,32 @@ def run_alio_cloud_check(cfg: Optional[Dict[str, Any]] = None) -> int:
             continue
 
         detail_url = f"{collector.WEB_DTL_URL}?seq={seq}"
+
+        # 중복 발송 방지 2: ntfy 실시간 사전 조회 (동시 러너 병렬 실행 시 이중 발송 방어)
+        if alio_topic:
+            try:
+                poll_chk_url = f"https://ntfy.sh/{alio_topic}/json?poll=1&since=10m"
+                req_chk = urllib.request.Request(poll_chk_url, headers={"User-Agent": "AlioNotifier/1.0"})
+                with urllib.request.urlopen(req_chk, context=collector.ssl_ctx, timeout=3) as resp_chk:
+                    if resp_chk.status == 200:
+                        lines_chk = resp_chk.read().decode("utf-8", errors="ignore").splitlines()
+                        alio_recent_sig = set()
+                        for l in lines_chk:
+                            try:
+                                d = json.loads(l)
+                                if d.get("event") == "message":
+                                    alio_recent_sig.add(d.get("title", ""))
+                                    if d.get("click"):
+                                        alio_recent_sig.add(d.get("click"))
+                            except Exception:
+                                pass
+                        if detail_url in alio_recent_sig or any(f"seq={seq}" in s for s in alio_recent_sig):
+                            print(f"  [알리오 중복 억제] 러너 동시 발송 감지 (seq={seq}): {title}")
+                            storage.save_notice(seq=seq, title=title, agency=agency, budget=0, post_date=post_date, close_date=close_date, detail_url=detail_url, source_url="", files=[], matched_keywords=matched_kws, env_category=cat_name, notified=True)
+                            continue
+            except Exception:
+                pass
+
         source_url, budget, files = collector.fetch_detail(seq)
 
         sent = collector.send_ntfy_alert(
