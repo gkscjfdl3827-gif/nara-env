@@ -113,7 +113,15 @@ def run_cloud_check():
         new_alerts += 1
         print(f"  [새 알림 전송] [{notice.stage}] [{cat_name}] {notice.title} (결과: {results})")
 
-    print(f"[{now_str}] 클라우드 검사 완료: 신규 알림 {new_alerts}건 발송됨.")
+    print(f"[{now_str}] 클라우드 나라장터 검사 완료: 신규 알림 {new_alerts}건 발송됨.")
+
+    # 3. 알리오(ALIO) 공공기관 입찰공고 독립 검사 (기존 나라장터와 DB 및 ntfy 토픽 완전 분리)
+    try:
+        from core.alio_collector import run_alio_cloud_check
+        run_alio_cloud_check(cfg)
+    except Exception as e:
+        print(f"[ALIO] 알리오 검사 중 예외 발생 (나라장터 정상 작동 유지): {e}")
+
     return new_alerts
 
 if __name__ == "__main__":
