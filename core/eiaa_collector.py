@@ -160,6 +160,12 @@ class EiaaCollector:
 
     def fetch_board_items(self) -> List[Dict[str, Any]]:
         """입찰정보 게시판 목록 크롤링"""
+        if not self.cookies and self.user_id and self.user_pw:
+            ok, msg = self.login()
+            if not ok:
+                print(f"[EiaaCollector] 협회 초기 로그인 실패: {msg}")
+                return []
+
         headers = dict(self.headers)
         if self.cookies:
             headers["Cookie"] = self._get_cookie_str()
@@ -196,66 +202,76 @@ class EiaaCollector:
         return self._parse_html(html)
 
     def _parse_html(self, html: str) -> List[Dict[str, Any]]:
-        """HTML 게시판 행 데이터 파싱"""
+        """HTML 게시판 목록 파싱 (반응형 div 구조 및 table 구조 모두 지원)"""
         items: List[Dict[str, Any]] = []
 
-        # 1. <table> 형태 행 파싱
-        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.DOTALL | re.IGNORECASE)
-        for row in rows:
-            tds = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL | re.IGNORECASE)
-            if not tds:
+        # 1. 반응형 DIV 구조 (rt-rwd-list-con)
+        pattern = re.compile(
+            r'<div class="rt-rwd-list-con rt-rwd-list-(?:norm|sign)-con[^"]*">.*?'
+            r'<div class="rt-rwd-list-num"><p>(.*?)</p></div>.*?'
+            r'<div class="rt-rwd-list-subject">.*?<a\s+href="([^"]+)">(.*?)</a>.*?'
+            r'등록일\s*:\s*</span>\s*([0-9.]+)',
+            re.DOTALL | re.IGNORECASE
+        )
+        for num, href, raw_title, date_str in pattern.findall(html):
+            clean_title = re.sub(r'<[^>]+>', '', raw_title).strip()
+            if not clean_title:
                 continue
-
-            # 링크 추출
-            link_m = re.search(r'href=[\'"]([^\'"]+)[\'"]', row, re.IGNORECASE)
-            if not link_m:
-                continue
-            href = link_m.group(1).replace("&amp;", "&")
-
-            # 순수 텍스트 정제
-            clean_tds = [re.sub(r'<[^>]+>', '', td).strip() for td in tds]
-
-            # 제목 추출
-            title = ""
-            for t in clean_tds:
-                if len(t) > 4 and not re.match(r'^\d{4}[-.]\d{2}[-.]\d{2}$', t) and not t.isdigit():
-                    title = t
-                    break
-
-            if not title:
-                continue
-
-            # 날짜 추출 (YYYY-MM-DD 또는 YYYY.MM.DD)
-            post_date = ""
-            for t in clean_tds:
-                m_date = re.search(r'(\d{4}[-.]\d{2}[-.]\d{2})', t)
-                if m_date:
-                    post_date = m_date.group(1)
-                    break
-
-            # 작성자 / 발주처 추출
-            agency = "환경영향평가협회"
-            for t in clean_tds:
-                if t and t != title and t != post_date and not t.isdigit() and len(t) < 30:
-                    agency = t
-                    break
-
-            # 고유 시퀀스 추출
+            agency = "(사)환경영향평가협회"
+            m_agency = re.match(r'^\s*\[(.*?)\]', clean_title)
+            if m_agency:
+                agency = m_agency.group(1).strip()
             seq_m = re.search(r'[?&](?:seq|idx|no|bseq|wr_id)=(\d+)', href)
-            seq = seq_m.group(1) if seq_m else ""
-            if not seq:
-                # 첫번째 td가 숫자인 경우 번호로 활용
-                if clean_tds and clean_tds[0].isdigit():
-                    seq = clean_tds[0]
-
-            full_url = urllib.parse.urljoin(self.LIST_URL, href)
+            seq = seq_m.group(1) if seq_m else num.strip()
+            full_url = urllib.parse.urljoin(self.LIST_URL, href.strip().replace("&amp;", "&"))
+            post_date = date_str.strip().replace('.', '-')
             items.append({
                 "seq": seq,
-                "title": title,
+                "title": clean_title,
                 "agency": agency,
                 "post_date": post_date,
                 "detail_url": full_url
             })
+
+        # 2. 만약 div 구조에서 안 잡혔을 경우 전통적인 <table> fallback
+        if not items:
+            rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.DOTALL | re.IGNORECASE)
+            for row in rows:
+                tds = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL | re.IGNORECASE)
+                if not tds:
+                    continue
+                link_m = re.search(r'href=[\'"]([^\'"]+)[\'"]', row, re.IGNORECASE)
+                if not link_m:
+                    continue
+                href = link_m.group(1).replace("&amp;", "&").strip()
+                clean_tds = [re.sub(r'<[^>]+>', '', td).strip() for td in tds]
+                title = ""
+                for t in clean_tds:
+                    if len(t) > 4 and not re.match(r'^\d{4}[-.]\d{2}[-.]\d{2}$', t) and not t.isdigit():
+                        title = t
+                        break
+                if not title:
+                    continue
+                post_date = ""
+                for t in clean_tds:
+                    m_date = re.search(r'(\d{4}[-.]\d{2}[-.]\d{2})', t)
+                    if m_date:
+                        post_date = m_date.group(1).replace('.', '-')
+                        break
+                agency = "(사)환경영향평가협회"
+                m_agency = re.match(r'^\s*\[(.*?)\]', title)
+                if m_agency:
+                    agency = m_agency.group(1).strip()
+                seq_m = re.search(r'[?&](?:seq|idx|no|bseq|wr_id)=(\d+)', href)
+                seq = seq_m.group(1) if seq_m else (clean_tds[0] if clean_tds and clean_tds[0].isdigit() else "")
+                full_url = urllib.parse.urljoin(self.LIST_URL, href)
+                items.append({
+                    "seq": seq,
+                    "title": title,
+                    "agency": agency,
+                    "post_date": post_date,
+                    "detail_url": full_url
+                })
 
         return items
 
