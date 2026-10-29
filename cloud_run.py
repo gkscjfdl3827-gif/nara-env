@@ -95,7 +95,24 @@ def run_cloud_check():
         if storage.is_already_seen(notice.unique_id):
             continue
 
-        # 중복 발송 방지 2: 최근 ntfy 실시간 발송 이력 검증 (동시 러너 이중 발송 방어)
+        # 중복 발송 방지 2: 최근 ntfy 실시간 발송 이력 검증 (동시 러너 경쟁 상태 완벽 방어)
+        if ntfy_topic:
+            try:
+                poll_chk_url = f"https://ntfy.sh/{ntfy_topic}/json?poll=1&since=10m"
+                req_chk = requests.get(poll_chk_url, timeout=3)
+                if req_chk.status_code == 200:
+                    for line in req_chk.text.splitlines():
+                        try:
+                            d = json.loads(line)
+                            if d.get("event") == "message":
+                                recent_sent_signatures.add(d.get("title", ""))
+                                if d.get("click"):
+                                    recent_sent_signatures.add(d.get("click"))
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
         if recent_sent_signatures:
             if notice.detail_url and notice.detail_url in recent_sent_signatures:
                 print(f"  [중복 알림 억제] 상세링크 일치: {notice.title}")
