@@ -393,6 +393,31 @@ def run_eiaa_cloud_check(cfg: Optional[Dict[str, Any]] = None) -> int:
         if storage.is_already_seen(seq, title, post_date):
             continue
 
+        # ntfy 실시간 사전 조회 (동시 러너 병렬 실행 시 이중 발송 방어)
+        if topic:
+            try:
+                poll_chk_url = f"https://ntfy.sh/{topic}/json?poll=1&since=10m"
+                req_chk = urllib.request.Request(poll_chk_url, headers={"User-Agent": "EiaaNotifier/1.0"})
+                with urllib.request.urlopen(req_chk, context=collector.ssl_ctx, timeout=3) as resp_chk:
+                    if resp_chk.status == 200:
+                        lines_chk = resp_chk.read().decode("utf-8", errors="ignore").splitlines()
+                        eiaa_recent_sig = set()
+                        for l in lines_chk:
+                            try:
+                                d = json.loads(l)
+                                if d.get("event") == "message":
+                                    eiaa_recent_sig.add(d.get("title", ""))
+                                    if d.get("click"):
+                                        eiaa_recent_sig.add(d.get("click"))
+                            except Exception:
+                                pass
+                        if detail_url in eiaa_recent_sig or any(f"seq={seq}" in s for s in eiaa_recent_sig if seq):
+                            print(f"  [평가협회 중복 억제] 러너 동시 발송 감지 (seq={seq}): {title}")
+                            storage.save_notice(seq=seq, title=title, agency=agency, post_date=post_date, detail_url=detail_url, matched_keywords=matched_kws, env_category=cat_name, notified=True)
+                            continue
+            except Exception:
+                pass
+
         sent = collector.send_ntfy_alert(
             topic=topic,
             title=title,
