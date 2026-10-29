@@ -122,6 +122,13 @@ def run_cloud_check():
     except Exception as e:
         print(f"[ALIO] 알리오 검사 중 예외 발생 (나라장터 정상 작동 유지): {e}")
 
+    # 4. (사)환경영향평가협회 입찰정보 독립 검사 ([평가협회] 구분 발송)
+    try:
+        from core.eiaa_collector import run_eiaa_cloud_check
+        run_eiaa_cloud_check(cfg)
+    except Exception as e:
+        print(f"[EIAA] 평가협회 검사 중 예외 발생 (나라장터 정상 작동 유지): {e}")
+
     return new_alerts
 
 if __name__ == "__main__":
