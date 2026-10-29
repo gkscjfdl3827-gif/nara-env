@@ -27,11 +27,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests
 
-      - name: 나라장터 및 알리오 공고 수집 및 스마트폰 알림 발송
+      - name: 나라장터, 알리오 및 평가협회 공고 수집 및 스마트폰 알림 발송
         env:
           DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           ALIO_NTFY_TOPIC: ${{ secrets.ALIO_NTFY_TOPIC }}
+          EIAA_USER_ID: ${{ secrets.EIAA_USER_ID }}
+          EIAA_USER_PW: ${{ secrets.EIAA_USER_PW }}
         run: |
           python cloud_run.py
 
@@ -39,6 +41,6 @@ jobs:
         run: |
           git config --global user.name "nara-bot"
           git config --global user.email "bot@github.com"
-          git add nara_notices.db alio_notices.db config.json
+          git add nara_notices.db alio_notices.db eiaa_notices.db config.json
           git commit -m "Auto-update notice DB [skip ci]" || exit 0
           git push origin main || (git pull --rebase -X theirs origin main && git push origin main) || true
