@@ -203,6 +203,14 @@ with tab2:
 with tab3:
     st.subheader("⚙️ 타겟 평가 키워드 및 나라장터 OpenAPI 설정")
 
+    with st.expander("🏛️ (사)환경영향평가협회(eiaa.or.kr) 입찰정보 계정 연동"):
+        st.markdown("""
+        환경영향평가협회 회원 전용 입찰정보 게시판에 올라오는 공고를 스마트폰으로 실시간 받아보실 수 있습니다.
+        협회 홈페이지(eiaa.or.kr) 아이디 및 비밀번호를 입력하시면 자동으로 세션 로그인하여 새 글을 감지하고 `[평가협회]` 머리말로 알람을 발송합니다.
+        """)
+        eiaa_id = st.text_input("협회 아이디", value=config.get("eiaa_user_id", ""))
+        eiaa_pw = st.text_input("협회 비밀번호", value=config.get("eiaa_user_pw", ""), type="password")
+
     with st.expander("🔑 공공데이터포털(data.go.kr) OpenAPI 키 설정"):
         st.markdown("""
         공공데이터포털에서 **'조달청_나라장터 공고정보서비스'** 무료 활용신청 후 발급받은 일반 인증키를 입력하시면 정부 공식 실시간 API로 수집됩니다.
@@ -225,6 +233,8 @@ with tab3:
     interval = st.number_input("자동 수집 주기 (초)", min_value=60, max_value=3600, value=int(config.get("check_interval_seconds", 300)), step=60)
 
     if st.button("💾 키워드 및 API 설정 저장"):
+        config["eiaa_user_id"] = eiaa_id.strip()
+        config["eiaa_user_pw"] = eiaa_pw.strip()
         config["use_openapi"] = use_openapi
         config["data_go_kr_service_key"] = service_key.strip()
         config["simulation_mode"] = simulation_mode
@@ -232,4 +242,4 @@ with tab3:
         config["custom_keywords"] = [k.strip() for k in new_kws.split(",") if k.strip()]
         config["custom_exclude_keywords"] = [k.strip() for k in new_ex_kws.split(",") if k.strip()]
         save_config(config, CONFIG_PATH)
-        st.success("✅ 키워드 및 수집 설정이 저장되었습니다!")
+        st.success("✅ 키워드, 협회 계정 및 수집 설정이 저장되었습니다!")
