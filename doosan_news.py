@@ -6,7 +6,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-import requests
+from curl_cffi import requests
 
 TOPIC = "doosan-bears-news-dsu-7c92a6e4"
 API = "https://api-gw.sports.naver.com/news/articles/kbaseball"
@@ -42,8 +42,8 @@ def collect(session, now):
 
 
 def run(db_path="doosan_news.db", dry_run=False, session=None, now=None):
-    session = session or requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0", "Referer": "https://m.sports.naver.com/"})
+    session = session or requests.Session(impersonate="chrome")
+    session.headers.update({"Referer": "https://m.sports.naver.com/"})
     now = now or datetime.now(ZoneInfo("Asia/Seoul"))
     articles = collect(session, now)
     if dry_run:
