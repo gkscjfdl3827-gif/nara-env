@@ -1,12 +1,13 @@
 $ErrorActionPreference = 'Stop'
 $now = [TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([datetime]::UtcNow, 'Asia/Seoul')
 $rows = [System.Collections.Generic.List[object]]::new()
-for ($offset = 0; $offset -lt 3; $offset++) {
+for ($offset = 0; $offset -lt 1; $offset++) {
   $date = $now.AddDays(-$offset).ToString('yyyyMMdd')
   $page = 1
   do {
     $url = "https://api-gw.sports.naver.com/news/articles/kbaseball?team=OB&sort=latest&date=$date&page=$page&pageSize=40"
-    $r = Invoke-RestMethod -Uri $url -Headers @{Referer='https://m.sports.naver.com/';'User-Agent'='Mozilla/5.0'} -TimeoutSec 25
+    Write-Host "Fetching Doosan news date=$date page=$page"
+    $r = Invoke-RestMethod -Uri $url -Headers @{Referer='https://m.sports.naver.com/';'User-Agent'='Mozilla/5.0'} -TimeoutSec 20 -MaximumRetryCount 2 -RetryIntervalSec 2
     if (-not $r.success -or $null -eq $r.result.newsList) { throw 'Invalid Naver Sports response' }
     foreach ($article in $r.result.newsList) { $rows.Add($article) }
     if ($page * 40 -ge $r.result.totalCount) { break }
