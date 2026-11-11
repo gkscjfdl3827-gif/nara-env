@@ -27,6 +27,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests
 
+      - name: 두산베어스 네이버스포츠 기사 알림
+        continue-on-error: true
+        run: python doosan_news.py
+
       - name: 나라장터, 알리오 및 평가협회 공고 수집 및 스마트폰 알림 발송
         env:
           DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
@@ -38,9 +42,11 @@ jobs:
           python cloud_run.py
 
       - name: 중복 방지 DB 상태 자동 동기화
+        if: always()
         run: |
           git config --global user.name "nara-bot"
           git config --global user.email "bot@github.com"
+          if [ -f doosan_news.db ]; then git add -f doosan_news.db; fi
           git add -f nara_notices.db alio_notices.db eiaa_notices.db config.json 2>/dev/null || git add *.db config.json || true
           git commit -m "Auto-update notice DB [skip ci]" || exit 0
           git push origin main || (git pull --rebase -X theirs origin main && git push origin main) || true
