@@ -1,0 +1,50 @@
+name: Doosan Bears Naver Sports Alerts
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/doosan-news.yml'
+      - 'doosan_news.py'
+      - 'doosan_collect.ps1'
+permissions:
+  contents: write
+concurrency:
+  group: doosan-news-alerts
+  cancel-in-progress: false
+jobs:
+  news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install notification HTTP client
+        run: pip install requests
+      - name: Collect Naver Sports Doosan team news
+        shell: pwsh
+        run: ./doosan_collect.ps1
+      - name: Send new articles to dedicated ntfy channel
+        env:
+          DOOSAN_NEWS_INPUT: doosan_snapshot.json
+        run: python doosan_news.py
+      - name: Persist deduplication state
+        if: always()
+        run: |
+          if [ ! -f doosan_news.db ]; then exit 0; fi
+          git config user.name "doosan-news-bot"
+          git config user.email "bot@github.com"
+          git add -f doosan_news.db
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Save Doosan news delivery state [skip ci]"
+          for attempt in 1 2 3; do
+            git pull --rebase origin main
+            if git push origin HEAD:main; then exit 0; fi
+          done
+          exit 1
