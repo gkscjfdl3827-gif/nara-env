@@ -6,7 +6,9 @@ import sqlite3
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from curl_cffi import requests
+import requests
+import json
+from pathlib import Path
 
 TOPIC = "doosan-bears-news-dsu-7c92a6e4"
 API = "https://api-gw.sports.naver.com/news/articles/kbaseball"
@@ -14,6 +16,18 @@ API = "https://api-gw.sports.naver.com/news/articles/kbaseball"
 
 def collect(session, now):
     articles = {}
+    snapshot = os.environ.get("DOOSAN_NEWS_INPUT")
+    if snapshot:
+        rows = json.loads(Path(snapshot).read_text(encoding="utf-8-sig"))
+        if not isinstance(rows, list):
+            raise ValueError("Unexpected snapshot")
+        for row in rows:
+            key = str(row["oid"]) + ":" + str(row["aid"])
+            if not row.get("title") or not row.get("dateTime"):
+                raise ValueError("Incomplete article")
+            articles[key] = row
+        print(f"Doosan: validated {len(articles)} articles from Naver cloud snapshot")
+        return sorted(articles.items(), key=lambda pair: pair[1]["dateTime"])
     for offset in range(3):
         date = (now - timedelta(days=offset)).strftime("%Y%m%d")
         page = 1
@@ -42,7 +56,7 @@ def collect(session, now):
 
 
 def run(db_path="doosan_news.db", dry_run=False, session=None, now=None):
-    session = session or requests.Session(impersonate="chrome")
+    session = session or requests.Session()
     session.headers.update({"Referer": "https://m.sports.naver.com/"})
     now = now or datetime.now(ZoneInfo("Asia/Seoul"))
     articles = collect(session, now)
