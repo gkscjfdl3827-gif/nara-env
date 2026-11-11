@@ -1,0 +1,25 @@
+name: Doosan cloud connectivity verification
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/doosan-connectivity.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 3
+    steps:
+      - name: Verify Naver Sports team news from cloud
+        shell: pwsh
+        run: |
+          $date = [TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([datetime]::UtcNow, 'Asia/Seoul').ToString('yyyyMMdd')
+          $url = "https://api-gw.sports.naver.com/news/articles/kbaseball?team=OB&sort=latest&date=$date&page=1&pageSize=40"
+          $r = Invoke-RestMethod -Uri $url -Headers @{Referer='https://m.sports.naver.com/';'User-Agent'='Mozilla/5.0'} -TimeoutSec 25
+          if (-not $r.success) { throw 'Naver API unsuccessful' }
+          Write-Host "DOOSAN_CLOUD_OK articles=$($r.result.totalCount)"
