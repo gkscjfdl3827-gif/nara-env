@@ -1,6 +1,10 @@
 name: Doosan Bears Naver Sports Alerts
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ['Nara Environmental Notice Cloud Monitor']
+    types: [requested]
+    branches: [main]
   schedule:
     - cron: '*/5 * * * *'
   push:
