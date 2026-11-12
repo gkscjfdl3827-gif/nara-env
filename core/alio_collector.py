@@ -61,7 +61,7 @@ class AlioNoticeStorage:
             cursor.execute(
                 """
                 SELECT 1 FROM notices 
-                WHERE notified = 1 AND (unique_id = ? 
+                WHERE notified = 1 AND (unique_id = ?
                    OR (agency = ? AND title = ? AND post_date = ? AND close_date = ?))
                 """,
                 (unique_id, agency, title, post_date, close_date)

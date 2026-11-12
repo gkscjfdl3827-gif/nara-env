@@ -26,7 +26,7 @@ def run(source, dry_run=False):
         from cloud_run import run_cloud_check
         from core.notifier import MultiChannelNotifier
         if os.environ.get('MONITOR_NO_SEND') == '1':
-            with patch.object(MultiChannelNotifier, 'notify_all', return_value={'dry_run': True}):
+            with patch.object(MultiChannelNotifier, 'notify_all', return_value={'ntfy': True, 'dry_run': True}):
                 run_cloud_check(include_auxiliary=False)
         else:
             run_cloud_check(include_auxiliary=False)
