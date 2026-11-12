@@ -1,12 +1,7 @@
 name: EIAA Independent Monitor
 
+# Automatic triggers disabled to prioritize Nara monitor.
 on:
-  workflow_run:
-    workflows: ['Nara Environmental Notice Cloud Monitor']
-    types: [requested]
-    branches: [main]
-  schedule:
-    - cron: '7,22,37,52 * * * *' # fallback if external dispatch is unavailable
   workflow_dispatch:
     inputs:
       dry_run:
