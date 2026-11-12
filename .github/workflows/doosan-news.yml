@@ -1,18 +1,6 @@
 name: Doosan Bears Naver Sports Alerts
 on:
-  workflow_dispatch:
-  workflow_run:
-    workflows: ['Nara Environmental Notice Cloud Monitor']
-    types: [requested]
-    branches: [main]
-  schedule:
-    - cron: '*/5 * * * *'
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/doosan-news.yml'
-      - 'doosan_news.py'
-      - 'doosan_collect.ps1'
+  workflow_dispatch: # Manual run only; automatic Doosan alerts disabled
 permissions:
   contents: write
 concurrency:
