@@ -118,61 +118,62 @@ class EiaaCollector:
             "Referer": "https://eiaa.or.kr/page/s5/s11.php"
         })
 
-    def login(self) -> Tuple[bool, str]:
-        """협회 세션 로그인 수행"""
-        if not self.user_id or not self.user_pw:
-            return False, "아이디 또는 비밀번호 미설정"
+    LOGIN_PAGE_URL = BASE_URL + "/page/mb/login.php?prepage=%2Fpage%2Fs5%2Fs11.php"
 
-        data = {
-            "mode": "login",
-            "pcd": "",
-            "userid": self.user_id,
-            "userpw": self.user_pw,
-            "is_memory": "y"
-        }
-        headers = {
-            "Origin": "https://eiaa.or.kr",
-            "Referer": "https://eiaa.or.kr/page/mb/login.php?prepage=%2Fpage%2Fs5%2Fs11.php",
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
-
+    def _request(self, stage, method, url, **kwargs):
+        # Never log bodies, URLs with queries, cookie values, or exception text.
         try:
-            resp = self.session.post(self.LOGIN_URL, data=data, headers=headers, timeout=12, verify=False)
-            body = resp.text
-            if "alert(" in body:
-                m = re.search(r"alert\('([^']+)'\)", body)
-                err_msg = m.group(1) if m else "로그인 실패"
-                return False, err_msg
-            return True, "로그인 성공"
-        except Exception as e:
-            return False, f"로그인 통신 오류: {e}"
+            response = self.session.request(method, url, timeout=20, verify=False, **kwargs)
+        except requests.RequestException:
+            raise RuntimeError(f"EIAA NETWORK_ERROR stage={stage}") from None
+        response.encoding = response.apparent_encoding
+        print(f"[EIAA] stage={stage} status={response.status_code} "
+              f"session_cookie={bool(self.session.cookies)}")
+        if response.status_code in (401, 403, 429):
+            raise RuntimeError(f"EIAA ACCESS_DENIED stage={stage} HTTP={response.status_code}; "
+                               "인증 실패 확정 불가: IP/봇 차단 또는 접근 정책 확인 필요")
+        if response.status_code >= 400:
+            raise RuntimeError(f"EIAA HTTP_ERROR stage={stage} HTTP={response.status_code}")
+        return response
+
+    @staticmethod
+    def _login_required(response):
+        return ("/mb/login.php" in response.url or
+                bool(re.search(r'<form[^>]+(?:name|id)=[\"\']login_form', response.text, re.I)) or
+                bool(re.search(r'(?:location|location.href)\s*=\s*[\"\'][^\"\']*login.php', response.text)))
+
+    def login(self) -> Tuple[bool, str]:
+        if not self.user_id or not self.user_pw:
+            return False, "EIAA CREDENTIALS_MISSING"
+        # Anonymous PHPSESSID is not proof of authentication. Bootstrap and POST
+        # through the very same Session before checking the protected board.
+        self._request("login_page", "GET", self.LOGIN_PAGE_URL)
+        response = self._request("login_post", "POST", self.LOGIN_URL, data={
+            "mode": "login", "pcd": "", "userid": self.user_id,
+            "userpw": self.user_pw, "is_memory": "y"
+        }, headers={"Origin": self.BASE_URL, "Referer": self.LOGIN_PAGE_URL})
+        if re.search(r'alert\s*\(', response.text):
+            return False, "EIAA AUTH_REJECTED: 로그인 응답이 거절을 표시함 (계정/회원 권한 확인)"
+        if self._login_required(response):
+            return False, "EIAA AUTH_UNCONFIRMED: 로그인 화면으로 복귀"
+        return True, "로그인 요청 완료; 보호된 목록에서 인증 확인 필요"
 
     def fetch_board_items(self) -> List[Dict[str, Any]]:
-        """입찰정보 게시판 목록 크롤링"""
-        if 'PHPSESSID' not in self.session.cookies and self.user_id and self.user_pw:
-            ok, msg = self.login()
-            if not ok:
-                raise RuntimeError("평가협회 초기 로그인 실패")
-
-        try:
-            resp = self.session.get(self.LIST_URL, timeout=12, verify=False)
-            resp.raise_for_status()
-            html = resp.text
-        except Exception as e:
-            raise RuntimeError("평가협회 목록 요청 실패") from e
-
-        if "login.php" in html and self.user_id and self.user_pw:
-            ok, msg = self.login()
-            if ok:
-                try:
-                    resp2 = self.session.get(self.LIST_URL, timeout=12, verify=False)
-                    html = resp2.text
-                except Exception as exc:
-                    raise RuntimeError("평가협회 재조회 실패") from exc
-            else:
-                raise RuntimeError("평가협회 재로그인 실패")
-
-        return self._parse_html(html)
+        ok, message = self.login()
+        if not ok:
+            raise RuntimeError(message)
+        response = self._request("authenticated_list", "GET", self.LIST_URL)
+        if self._login_required(response):
+            raise RuntimeError("EIAA AUTH_REQUIRED: 로그인 후에도 로그인 화면 반환")
+        html = response.text
+        # A navigation login link or shared alert() script is not an auth failure.
+        if not re.search(r'logout', html, re.I):
+            raise RuntimeError("EIAA AUTH_UNCONFIRMED: 로그아웃 표시 없음; 인증 성공 판정 보류")
+        items = self._parse_html(html)
+        if not items and not re.search(r'등록된\s*(?:게시물|자료|글|공고).*?없', html, re.S):
+            raise RuntimeError("EIAA BOARD_UNRECOGNIZED: 공고 파싱 실패를 0건 성공으로 처리하지 않음")
+        print(f"[EIAA] authentication=confirmed items={len(items)}")
+        return items
 
     def _parse_html(self, html: str) -> List[Dict[str, Any]]:
         """HTML 게시판 목록 파싱 (반응형 div 구조 및 table 구조 모두 지원)"""
@@ -305,16 +306,17 @@ def run_eiaa_cloud_check(cfg: Optional[Dict[str, Any]] = None) -> int:
             with open(config_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
 
-    user_id = os.environ.get("EIAA_USER_ID") or cfg.get("eiaa_user_id", "")
-    user_pw = os.environ.get("EIAA_USER_PW") or cfg.get("eiaa_user_pw", "")
+    in_actions = os.environ.get("GITHUB_ACTIONS") == "true"
+    user_id = os.environ.get("EIAA_USER_ID") or ("" if in_actions else cfg.get("eiaa_user_id", ""))
+    user_pw = os.environ.get("EIAA_USER_PW") or ("" if in_actions else cfg.get("eiaa_user_pw", ""))
+    print(f"[EIAA] credentials_source={'github_secrets' if in_actions else 'environment_or_local_config'} configured={bool(user_id and user_pw)}")
     topic = os.environ.get("EIAA_NTFY_TOPIC") or cfg.get("eiaa_ntfy_topic") or os.environ.get("NTFY_TOPIC") or cfg.get("ntfy_topic", "nara-env-alert-myphone")
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"\n[{now_str}] [(사)환경영향평가협회] 입찰정보 모니터링 검사...")
 
     if not user_id or not user_pw:
-        print(" - [평가협회] 협회 계정(eiaa_user_id, eiaa_user_pw) 설정 대기 중 (설정 시 즉시 수집 활성화)")
-        return 0
+        raise RuntimeError("EIAA CREDENTIALS_MISSING: EIAA_USER_ID / EIAA_USER_PW 설정 필요")
 
     db_path = os.path.join(base_dir, "eiaa_notices.db")
     storage = EiaaNoticeStorage(db_path=db_path)

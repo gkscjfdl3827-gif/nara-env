@@ -23,8 +23,8 @@
     "청소용품",
     "사무용품"
   ],
-  "eiaa_user_id": "dasan93",
-  "eiaa_user_pw": "dasan93!!",
+  "eiaa_user_id": "",
+  "eiaa_user_pw": "",
   "eiaa_ntfy_topic": "nara-env-alert-myphone",
   "simulation_mode": false
 }
