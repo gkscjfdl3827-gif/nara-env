@@ -1,4 +1,6 @@
 import requests
+import time
+from requests.exceptions import ConnectionError as RequestsConnectionError
 import urllib.parse
 from typing import Optional, Dict, Any
 from .models import BidNotice
@@ -82,12 +84,27 @@ class MultiChannelNotifier:
                 }
             ]
 
-        try:
-            resp = requests.post(url, json=payload, timeout=8)
-            return resp.status_code == 200
-        except Exception as e:
-            print(f"[Notifier] ntfy push failed: {e}")
-            return False
+        # Retry only connection establishment failures (including temporary DNS
+        # resolution errors). Do not retry read timeouts: the server may already
+        # have accepted the push, and retrying could create duplicate alerts.
+        for attempt in range(1, 4):
+            try:
+                resp = requests.post(url, json=payload, timeout=(3, 8))
+                if resp.status_code == 200:
+                    if attempt > 1:
+                        print(f"[Notifier] ntfy push recovered on attempt {attempt}/3")
+                    return True
+                print(f"[Notifier] ntfy push failed: HTTP {resp.status_code}")
+                return False
+            except RequestsConnectionError as e:
+                print(f"[Notifier] ntfy connection failed ({attempt}/3): {e}")
+                if attempt == 3:
+                    return False
+                time.sleep(1 if attempt == 1 else 2)
+            except requests.exceptions.RequestException as e:
+                print(f"[Notifier] ntfy push failed (no retry): {e}")
+                return False
+        return False
 
     def send_telegram(self, notice: BidNotice, bot_token: Optional[str] = None, chat_id: Optional[str] = None) -> bool:
         """텔레그램 봇 스마트폰 알림 발송"""
