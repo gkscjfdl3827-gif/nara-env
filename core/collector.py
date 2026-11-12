@@ -165,7 +165,7 @@ class NaraCollector:
             }
             for attempt in range(2):
                 try:
-                    resp = requests.post(url, json=payload, headers=headers, timeout=(4, 12))
+                    resp = requests.post(url, json=payload, headers=headers, timeout=(12, 12))
                     resp.raise_for_status()
                     data = resp.json()
                     items = data.get('dlTotalSrchL')
