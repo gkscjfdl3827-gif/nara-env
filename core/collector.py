@@ -3,6 +3,7 @@ import json
 import html
 import re
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from .models import BidNotice
@@ -145,24 +146,34 @@ class NaraCollector:
         notices: List[BidNotice] = []
         seen_uids = set()
 
-        for stg_cd, stage_name in stage_targets:
-            for kw in keywords:
-                payload = {
-                    'dlSrchParamM': {
-                        'currentPage': 1,
-                        'recordCountPerPage': '100',
-                        'bizNm': kw,
-                        'untySrchSeCd': stg_cd,
-                        'startBizYmd': from_dt,
-                        'endBizYmd': to_dt
-                    }
+        # 20개의 단계/키워드 검색을 제한된 동시성으로 실행해 대기시간 단축
+        # 각 요청은 독립 requests.post를 사용하며 Session을 스레드 간 공유하지 않음
+        def search_one(task):
+            stg_cd, stage_name, kw = task
+            payload = {
+                'dlSrchParamM': {
+                    'currentPage': 1,
+                    'recordCountPerPage': '100',
+                    'bizNm': kw,
+                    'untySrchSeCd': stg_cd,
+                    'startBizYmd': from_dt,
+                    'endBizYmd': to_dt
                 }
-                try:
-                    resp = requests.post(url, json=payload, headers=headers, timeout=12)
-                    if resp.status_code != 200:
-                        continue
+            }
+            try:
+                resp = requests.post(url, json=payload, headers=headers, timeout=(4, 12))
+                resp.raise_for_status()
+                return stg_cd, stage_name, kw, resp.json().get('dlTotalSrchL', [])
+            except Exception as exc:
+                print(f"[NaraCollector] 통합검색 실패 ({stage_name}/{kw}): {exc}", flush=True)
+                return stg_cd, stage_name, kw, []
 
-                    items = resp.json().get('dlTotalSrchL', [])
+        tasks = [(stg_cd, stage_name, kw) for stg_cd, stage_name in stage_targets for kw in keywords]
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            search_results = list(pool.map(search_one, tasks))
+
+        for stg_cd, stage_name, kw, items in search_results:
+            try:
                     for it in items:
                         biz_no = str(it.get('bizNo') or '').strip()
                         biz_ord = str(it.get('bizOrd') or '00').strip()
