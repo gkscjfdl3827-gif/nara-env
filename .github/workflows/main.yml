@@ -12,10 +12,14 @@ permissions:
 
 jobs:
   check-and-alert:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: 저장소 코드 불러오기
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: 파이썬 환경 설정
         uses: actions/setup-python@v5
@@ -29,6 +33,8 @@ jobs:
 
       - name: 나라장터, 알리오 및 평가협회 공고 수집 및 스마트폰 알림 발송
         env:
+          PYTHONUNBUFFERED: '1'
+          TZ: Asia/Seoul
           DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           ALIO_NTFY_TOPIC: ${{ secrets.ALIO_NTFY_TOPIC }}
@@ -38,9 +44,15 @@ jobs:
           python cloud_run.py
 
       - name: 중복 방지 DB 상태 자동 동기화
-        run: |
-          git config --global user.name "nara-bot"
-          git config --global user.email "bot@github.com"
-          git add -f nara_notices.db alio_notices.db eiaa_notices.db config.json 2>/dev/null || git add *.db config.json || true
-          git commit -m "Auto-update notice DB [skip ci]" || exit 0
-          git push origin main || (git pull --rebase -X theirs origin main && git push origin main) || true
+        if: always()
+        run: python scripts/persist_state.py all
+      - name: 실패 시 DB 복구본 보관
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitor-state-${{ github.run_id }}
+          path: |
+            nara_notices.db
+            alio_notices.db
+            eiaa_notices.db
+          retention-days: 7

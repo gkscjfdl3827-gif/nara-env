@@ -56,11 +56,11 @@ class NoticeStorage:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_stage ON notices (stage)")
             conn.commit()
 
-    def is_already_seen(self, unique_id: str) -> bool:
+    def is_already_seen(self, unique_id: str, notified_only: bool = False) -> bool:
         """이미 수집/처리된 공고인지 확인"""
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM notices WHERE unique_id = ?", (unique_id,))
+            cursor.execute("SELECT 1 FROM notices WHERE unique_id = ?" + (" AND notified = 1" if notified_only else ""), (unique_id,))
             return cursor.fetchone() is not None
 
     def save_notice(self, notice: BidNotice, notified: bool = False) -> bool:

@@ -11,7 +11,7 @@ from core.storage import NoticeStorage
 from core.notifier import MultiChannelNotifier
 from core.collector import NaraCollector
 
-def run_cloud_check():
+def run_cloud_check(include_auxiliary=True):
     """
     클라우드(GitHub Actions / 무료 서버)에서 컴퓨터 없이 24시간 실행되는 수집기
     환경 변수(Secrets) 또는 config.json을 자동으로 감지합니다.
@@ -49,7 +49,7 @@ def run_cloud_check():
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{now_str}] 클라우드 나라장터 환경영향평가 모니터링 시작...")
-    print(f" - 알림 채널(ntfy 토픽): {ntfy_topic}")
+    print(f" - ntfy 알림 경로 설정: {bool(ntfy_topic)}")
 
     # ntfy 최근 발송 내역 사전 폴링 (러너 동시 실행 또는 DB 동기화 지연 시 이중 알림 완벽 방어)
     recent_sent_signatures = set()
@@ -86,13 +86,14 @@ def run_cloud_check():
     print(f" - 수집된 원천 공고: 총 {len(raw_notices)}건")
 
     new_alerts = 0
+    delivery_failed = False
     for notice in raw_notices:
         is_env, matched_kws, cat_name = env_filter.evaluate(notice)
         if not is_env:
             continue
 
         # 중복 발송 방지 1: 로컬 SQLite DB 확인
-        if storage.is_already_seen(notice.unique_id):
+        if storage.is_already_seen(notice.unique_id, notified_only=True):
             continue
 
         # 중복 발송 방지 2: 최근 ntfy 실시간 발송 이력 검증 (동시 러너 경쟁 상태 완벽 방어)
@@ -118,35 +119,37 @@ def run_cloud_check():
                 print(f"  [중복 알림 억제] 동일 나라장터 링크 일치: {notice.title}")
                 storage.save_notice(notice, notified=True)
                 continue
-            # 나라장터 자체의 동시 러너 중복만 억제 (평가협회/ALIO 공고와는 완전 독립으로 중복 수신 허용)
-            if any((notice.bid_no and notice.bid_no in sig) or (notice.title in sig and "[평가협회]" not in sig) for sig in recent_sent_signatures):
-                print(f"  [중복 알림 억제] 동일 나라장터 공고번호/제목 일치: {notice.title}")
-                storage.save_notice(notice, notified=True)
-                continue
 
         # 저장 및 푸시 발송
         storage.save_notice(notice, notified=False)
         results = notifier.notify_all(notice)
-        storage.mark_as_notified(notice.unique_id)
-        new_alerts += 1
+        delivered = results.get("ntfy", False) if ntfy_topic else bool(results) and all(results.values())
+        if delivered:
+            storage.mark_as_notified(notice.unique_id)
+            new_alerts += 1
+        else:
+            delivery_failed = True
         print(f"  [새 알림 전송] [{notice.stage}] [{cat_name}] {notice.title} (결과: {results})")
 
     print(f"[{now_str}] 클라우드 나라장터 검사 완료: 신규 알림 {new_alerts}건 발송됨.")
 
-    # 3. 알리오(ALIO) 공공기관 입찰공고 독립 검사 (기존 나라장터와 DB 및 ntfy 토픽 완전 분리)
-    try:
-        from core.alio_collector import run_alio_cloud_check
-        run_alio_cloud_check(cfg)
-    except Exception as e:
-        print(f"[ALIO] 알리오 검사 중 예외 발생 (나라장터 정상 작동 유지): {e}")
+    if include_auxiliary:
+        # 3. 알리오(ALIO) 공공기관 입찰공고 독립 검사 (기존 나라장터와 DB 및 ntfy 토픽 완전 분리)
+        try:
+            from core.alio_collector import run_alio_cloud_check
+            run_alio_cloud_check(cfg)
+        except Exception as e:
+            print(f"[ALIO] 알리오 검사 중 예외 발생 (나라장터 정상 작동 유지): {e}")
 
-    # 4. (사)환경영향평가협회 입찰정보 독립 검사 ([평가협회] 구분 발송)
-    try:
-        from core.eiaa_collector import run_eiaa_cloud_check
-        run_eiaa_cloud_check(cfg)
-    except Exception as e:
-        print(f"[EIAA] 평가협회 검사 중 예외 발생 (나라장터 정상 작동 유지): {e}")
+        # 4. (사)환경영향평가협회 입찰정보 독립 검사 ([평가협회] 구분 발송)
+        try:
+            from core.eiaa_collector import run_eiaa_cloud_check
+            run_eiaa_cloud_check(cfg)
+        except Exception as e:
+            print(f"[EIAA] 평가협회 검사 중 예외 발생 (나라장터 정상 작동 유지): {e}")
 
+    if delivery_failed or getattr(collector, "search_errors", []):
+        raise RuntimeError("나라장터 일부 검색/발송 실패: 로그 확인 및 다음 실행 재시도 필요")
     return new_alerts
 
 if __name__ == "__main__":

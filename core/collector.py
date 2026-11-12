@@ -21,6 +21,7 @@ class NaraCollector:
 
     def __init__(self, service_key: Optional[str] = None):
         self.service_key = service_key
+        self.search_errors = []
 
     @staticmethod
     def _clean_title(val: Any) -> str:
@@ -143,6 +144,7 @@ class NaraCollector:
             ('BUK', '입찰공고')
         ]
 
+        self.search_errors = []
         notices: List[BidNotice] = []
         seen_uids = set()
 
@@ -160,13 +162,22 @@ class NaraCollector:
                     'endBizYmd': to_dt
                 }
             }
-            try:
-                resp = requests.post(url, json=payload, headers=headers, timeout=(4, 12))
-                resp.raise_for_status()
-                return stg_cd, stage_name, kw, resp.json().get('dlTotalSrchL', [])
-            except Exception as exc:
-                print(f"[NaraCollector] 통합검색 실패 ({stage_name}/{kw}): {exc}", flush=True)
-                return stg_cd, stage_name, kw, []
+            for attempt in range(2):
+                try:
+                    resp = requests.post(url, json=payload, headers=headers, timeout=(4, 12))
+                    resp.raise_for_status()
+                    data = resp.json()
+                    items = data.get('dlTotalSrchL')
+                    if not isinstance(items, list):
+                        raise ValueError('Missing/invalid search result list')
+                    if len(items) >= 100:
+                        self.search_errors.append(f'{stg_cd}/{kw}: result limit reached')
+                        print(f'::warning::검색 결과 100건 상한 도달 ({stage_name}/{kw}); 후속 페이지 확인 필요')
+                    return stg_cd, stage_name, kw, items
+                except Exception as exc:
+                    print(f'[NaraCollector] 통합검색 재시도 {attempt + 1}/2 ({stage_name}/{kw}): {type(exc).__name__}', flush=True)
+            self.search_errors.append(f'{stg_cd}/{kw}: request failed')
+            return stg_cd, stage_name, kw, []
 
         tasks = [(stg_cd, stage_name, kw) for stg_cd, stage_name in stage_targets for kw in keywords]
         with ThreadPoolExecutor(max_workers=5) as pool:
@@ -258,6 +269,7 @@ class NaraCollector:
                         )
                         notices.append(notice)
             except Exception as e:
+                self.search_errors.append(f"{stg_cd}/{kw}: parse failed")
                 print(f"[NaraCollector] unty_search 파싱 실패 (단계: {stage_name}, 키워드: {kw}): {e}", flush=True)
 
         return notices

@@ -61,8 +61,8 @@ class AlioNoticeStorage:
             cursor.execute(
                 """
                 SELECT 1 FROM notices 
-                WHERE unique_id = ? 
-                   OR (agency = ? AND title = ? AND post_date = ? AND close_date = ?)
+                WHERE notified = 1 AND (unique_id = ? 
+                   OR (agency = ? AND title = ? AND post_date = ? AND close_date = ?))
                 """,
                 (unique_id, agency, title, post_date, close_date)
             )
@@ -93,6 +93,7 @@ class AlioNoticeStorage:
                         post_date, close_date, detail_url, source_url,
                         files, matched_keywords, env_category, stage, notified
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '입찰공고', ?)
+                    ON CONFLICT(unique_id) DO UPDATE SET notified = MAX(notices.notified, excluded.notified)
                 """, (
                     unique_id,
                     str(seq),
@@ -132,6 +133,7 @@ class AlioCollector:
 
     def __init__(self, max_pages: int = 3):
         self.max_pages = max_pages
+        self.request_errors = []
         self.ssl_ctx = ssl.create_default_context()
         self.ssl_ctx.check_hostname = False
         self.ssl_ctx.verify_mode = ssl.CERT_NONE
@@ -150,6 +152,7 @@ class AlioCollector:
                     return json.loads(resp.read().decode("utf-8", errors="ignore"))
         except Exception as e:
             print(f"[AlioCollector] 요청 오류 ({url}): {e}")
+        self.request_errors.append("ALIO request failed")
         return None
 
     def fetch_page(self, page_no: int = 1, word: str = "") -> List[Dict[str, Any]]:
@@ -157,6 +160,7 @@ class AlioCollector:
         url = f"{self.BASE_LIST_URL}?{urllib.parse.urlencode(params)}"
         res_json = self._get_json(url)
         if not res_json or res_json.get("status") != "success":
+            self.request_errors.append("ALIO list response failed")
             return []
         data = res_json.get("data") or {}
         return data.get("result") or []
@@ -329,12 +333,13 @@ def run_alio_cloud_check(cfg: Optional[Dict[str, Any]] = None) -> int:
     collector = AlioCollector(max_pages=3)
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"\n[{now_str}] [알리오(ALIO)] 공공기관 환경영향평가 모니터링 시작...")
-    print(f" - 알리오 알림 채널(ntfy 토픽): {alio_topic}")
+    print(f" - 알리오 ntfy 알림 경로 설정: {bool(alio_topic)}")
 
     items = collector.fetch_all_items(days_back=14)
     print(f" - 알리오 수집된 원천 공고: 총 {len(items)}건")
 
     new_alerts = 0
+    delivery_failed = False
     for item in items:
         seq = str(item.get("seq") or "").strip()
         title = str(item.get("rtitle") or "").strip()
@@ -407,8 +412,13 @@ def run_alio_cloud_check(cfg: Optional[Dict[str, Any]] = None) -> int:
             env_category=cat_name,
             notified=sent
         )
-        new_alerts += 1
+        if sent:
+            new_alerts += 1
+        else:
+            delivery_failed = True
         print(f"  [알리오 새 알림 전송] [{cat_name}] [{agency}] {title} (ntfy: {sent})")
 
     print(f"[{now_str}] 알리오 검사 완료: 신규 알림 {new_alerts}건 발송됨.")
+    if delivery_failed or collector.request_errors:
+        raise RuntimeError("일부 ntfy 발송 실패: 미발송 건은 다음 실행에서 재시도")
     return new_alerts

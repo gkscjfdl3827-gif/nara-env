@@ -55,10 +55,10 @@ class EiaaNoticeStorage:
         unique_id = f"EIAA-{seq}" if seq else f"EIAA-{title}-{post_date}"
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM notices WHERE unique_id = ? LIMIT 1", (unique_id,))
+            cursor.execute("SELECT 1 FROM notices WHERE unique_id = ? AND notified = 1 LIMIT 1", (unique_id,))
             if cursor.fetchone():
                 return True
-            cursor.execute("SELECT 1 FROM notices WHERE title = ? AND post_date = ? LIMIT 1", (title, post_date))
+            cursor.execute("SELECT 1 FROM notices WHERE title = ? AND post_date = ? AND notified = 1 LIMIT 1", (title, post_date))
             return cursor.fetchone() is not None
 
     def save_notice(
@@ -82,6 +82,7 @@ class EiaaNoticeStorage:
                         post_date, detail_url,
                         matched_keywords, env_category, stage, notified
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '입찰공고', ?)
+                    ON CONFLICT(unique_id) DO UPDATE SET notified = MAX(notices.notified, excluded.notified)
                 """, (
                     unique_id,
                     str(seq or ''),
@@ -151,15 +152,14 @@ class EiaaCollector:
         if 'PHPSESSID' not in self.session.cookies and self.user_id and self.user_pw:
             ok, msg = self.login()
             if not ok:
-                print(f"[EiaaCollector] 협회 초기 로그인 실패: {msg}")
-                return []
+                raise RuntimeError("평가협회 초기 로그인 실패")
 
         try:
             resp = self.session.get(self.LIST_URL, timeout=12, verify=False)
+            resp.raise_for_status()
             html = resp.text
         except Exception as e:
-            print(f"[EiaaCollector] 페이지 요청 오류: {e}")
-            return []
+            raise RuntimeError("평가협회 목록 요청 실패") from e
 
         if "login.php" in html and self.user_id and self.user_pw:
             ok, msg = self.login()
@@ -167,11 +167,10 @@ class EiaaCollector:
                 try:
                     resp2 = self.session.get(self.LIST_URL, timeout=12, verify=False)
                     html = resp2.text
-                except Exception:
-                    return []
+                except Exception as exc:
+                    raise RuntimeError("평가협회 재조회 실패") from exc
             else:
-                print(f"[EiaaCollector] 재로그인 실패: {msg}")
-                return []
+                raise RuntimeError("평가협회 재로그인 실패")
 
         return self._parse_html(html)
 
@@ -332,6 +331,7 @@ def run_eiaa_cloud_check(cfg: Optional[Dict[str, Any]] = None) -> int:
     print(f" - [평가협회] 수집된 공고: 총 {len(items)}건")
 
     new_alerts = 0
+    delivery_failed = False
     for item in items:
         seq = item.get("seq", "")
         title = item.get("title", "")
@@ -406,8 +406,13 @@ def run_eiaa_cloud_check(cfg: Optional[Dict[str, Any]] = None) -> int:
             env_category=cat_name,
             notified=sent
         )
-        new_alerts += 1
+        if sent:
+            new_alerts += 1
+        else:
+            delivery_failed = True
         print(f"  [평가협회 새 알림 전송] [{cat_name}] {title} (ntfy: {sent})")
 
     print(f"[{now_str}] 평가협회 검사 완료: 신규 알림 {new_alerts}건 발송됨.")
+    if delivery_failed:
+        raise RuntimeError("일부 ntfy 발송 실패: 미발송 건은 다음 실행에서 재시도")
     return new_alerts

@@ -1,0 +1,54 @@
+name: EIAA Independent Monitor
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Collect without sending alerts or changing production DB'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nara-env-eiaa-monitor
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+      - name: Collect eiaa independently
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          EIAA_NTFY_TOPIC: ${{ secrets.EIAA_NTFY_TOPIC }}
+          EIAA_USER_ID: ${{ secrets.EIAA_USER_ID }}
+          EIAA_USER_PW: ${{ secrets.EIAA_USER_PW }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PYTHONUNBUFFERED: '1'
+          TZ: Asia/Seoul
+        run: |
+          args=()
+          if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          python run_source.py --source eiaa "${args[@]}"
+      - name: Persist only eiaa state
+        if: ${{ always() && inputs.dry_run != true }}
+        run: python scripts/persist_state.py eiaa
+      - name: Retain DB for recovery on failure
+        if: ${{ failure() && inputs.dry_run != true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: eiaa-state-${{ github.run_id }}
+          path: eiaa_notices.db
+          retention-days: 7
