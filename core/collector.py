@@ -3,7 +3,6 @@ import json
 import html
 import re
 import urllib.parse
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from .models import BidNotice
@@ -20,8 +19,8 @@ class NaraCollector:
     G2B_BASE = "https://www.g2b.go.kr"
 
     def __init__(self, service_key: Optional[str] = None, enrich_budgets: bool = True):
-        self.enrich_budgets = enrich_budgets
         self.service_key = service_key
+        self.enrich_budgets = enrich_budgets
         self.search_errors = []
 
     @staticmethod
@@ -145,47 +144,27 @@ class NaraCollector:
             ('BUK', '입찰공고')
         ]
 
-        self.search_errors = []
         notices: List[BidNotice] = []
         seen_uids = set()
 
-        # 20개의 단계/키워드 검색을 제한된 동시성으로 실행해 대기시간 단축
-        # 각 요청은 독립 requests.post를 사용하며 Session을 스레드 간 공유하지 않음
-        def search_one(task):
-            stg_cd, stage_name, kw = task
-            payload = {
-                'dlSrchParamM': {
-                    'currentPage': 1,
-                    'recordCountPerPage': '100',
-                    'bizNm': kw,
-                    'untySrchSeCd': stg_cd,
-                    'startBizYmd': from_dt,
-                    'endBizYmd': to_dt
+        for stg_cd, stage_name in stage_targets:
+            for kw in keywords:
+                payload = {
+                    'dlSrchParamM': {
+                        'currentPage': 1,
+                        'recordCountPerPage': '100',
+                        'bizNm': kw,
+                        'untySrchSeCd': stg_cd,
+                        'startBizYmd': from_dt,
+                        'endBizYmd': to_dt
+                    }
                 }
-            }
-            for attempt in range(2):
                 try:
-                    resp = requests.post(url, json=payload, headers=headers, timeout=(12, 12))
-                    resp.raise_for_status()
-                    data = resp.json()
-                    items = data.get('dlTotalSrchL')
-                    if not isinstance(items, list):
-                        raise ValueError('Missing/invalid search result list')
-                    if len(items) >= 100:
-                        self.search_errors.append(f'{stg_cd}/{kw}: result limit reached')
-                        print(f'::warning::검색 결과 100건 상한 도달 ({stage_name}/{kw}); 후속 페이지 확인 필요')
-                    return stg_cd, stage_name, kw, items
-                except Exception as exc:
-                    print(f'[NaraCollector] 통합검색 재시도 {attempt + 1}/2 ({stage_name}/{kw}): {type(exc).__name__}', flush=True)
-            self.search_errors.append(f'{stg_cd}/{kw}: request failed')
-            return stg_cd, stage_name, kw, []
+                    resp = requests.post(url, json=payload, headers=headers, timeout=12)
+                    if resp.status_code != 200:
+                        continue
 
-        tasks = [(stg_cd, stage_name, kw) for stg_cd, stage_name in stage_targets for kw in keywords]
-        with ThreadPoolExecutor(max_workers=5) as pool:
-            search_results = list(pool.map(search_one, tasks))
-
-        for stg_cd, stage_name, kw, items in search_results:
-            try:
+                    items = resp.json().get('dlTotalSrchL', [])
                     for it in items:
                         biz_no = str(it.get('bizNo') or '').strip()
                         biz_ord = str(it.get('bizOrd') or '00').strip()
@@ -220,7 +199,7 @@ class NaraCollector:
 
                         # 예산 파싱 (검색 목록에서 0으로 누락되는 사전규격/발주계획은 상세 API 연동을 통해 실제 예산액 전수 보강)
                         budget = self._parse_int(it.get('dmndSrchItm02')) or self._parse_int(it.get('dmndSrchItm03')) or self._parse_int(it.get('pbancSrchItm03')) or self._parse_int(it.get('ctrtAmt'))
-                        if not budget and self.enrich_budgets:
+                        if not budget:
                             if stg_cd == 'DD':
                                 budget = self._fetch_oder_plan_budget(biz_no)
                             elif stg_cd == 'BD':
@@ -269,9 +248,8 @@ class NaraCollector:
                             raw_data=it
                         )
                         notices.append(notice)
-            except Exception as e:
-                self.search_errors.append(f"{stg_cd}/{kw}: parse failed")
-                print(f"[NaraCollector] unty_search 파싱 실패 (단계: {stage_name}, 키워드: {kw}): {e}", flush=True)
+                except Exception as e:
+                    print(f"[NaraCollector] unty_search 실패 (단계: {stage_name}, 키워드: {kw}): {e}")
 
         return notices
 
