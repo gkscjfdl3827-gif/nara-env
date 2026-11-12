@@ -257,8 +257,8 @@ class NaraCollector:
                             raw_data=it
                         )
                         notices.append(notice)
-                except Exception as e:
-                    print(f"[NaraCollector] unty_search 실패 (단계: {stage_name}, 키워드: {kw}): {e}")
+            except Exception as e:
+                print(f"[NaraCollector] unty_search 파싱 실패 (단계: {stage_name}, 키워드: {kw}): {e}", flush=True)
 
         return notices
 
