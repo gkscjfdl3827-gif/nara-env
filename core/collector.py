@@ -19,7 +19,8 @@ class NaraCollector:
     OPENAPI_BASE = "http://apis.data.go.kr/1230000/ad/BidPublicInfoService"
     G2B_BASE = "https://www.g2b.go.kr"
 
-    def __init__(self, service_key: Optional[str] = None):
+    def __init__(self, service_key: Optional[str] = None, enrich_budgets: bool = True):
+        self.enrich_budgets = enrich_budgets
         self.service_key = service_key
         self.search_errors = []
 
@@ -219,7 +220,7 @@ class NaraCollector:
 
                         # 예산 파싱 (검색 목록에서 0으로 누락되는 사전규격/발주계획은 상세 API 연동을 통해 실제 예산액 전수 보강)
                         budget = self._parse_int(it.get('dmndSrchItm02')) or self._parse_int(it.get('dmndSrchItm03')) or self._parse_int(it.get('pbancSrchItm03')) or self._parse_int(it.get('ctrtAmt'))
-                        if not budget:
+                        if not budget and self.enrich_budgets:
                             if stg_cd == 'DD':
                                 budget = self._fetch_oder_plan_budget(biz_no)
                             elif stg_cd == 'BD':

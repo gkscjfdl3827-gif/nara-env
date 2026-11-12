@@ -367,7 +367,7 @@ def run_eiaa_cloud_check(cfg: Optional[Dict[str, Any]] = None) -> int:
         # 중복 발송 방지 2: ntfy 실시간 사전 조회 (동시 러너 병렬 실행 시 이중 발송 방어)
         if topic:
             try:
-                poll_chk_url = f"https://ntfy.sh/{topic}/json?poll=1&since=10m"
+                poll_chk_url = f"https://ntfy.sh/{topic}/json?poll=1&since=45m"
                 resp_chk = requests.get(poll_chk_url, headers={"User-Agent": "EiaaNotifier/1.0"}, timeout=3)
                 if resp_chk.status_code == 200:
                     eiaa_recent_sig = set()
@@ -380,7 +380,7 @@ def run_eiaa_cloud_check(cfg: Optional[Dict[str, Any]] = None) -> int:
                                     eiaa_recent_sig.add(d.get("click"))
                         except Exception:
                             pass
-                    if detail_url in eiaa_recent_sig or any(f"seq={seq}" in s for s in eiaa_recent_sig if seq):
+                    if detail_url and detail_url in eiaa_recent_sig:
                         print(f"  [평가협회 중복 억제] 러너 동시 발송 감지 (seq={seq}): {title}")
                         storage.save_notice(seq=seq, title=title, agency=agency, post_date=post_date, detail_url=detail_url, matched_keywords=matched_kws, env_category=cat_name, notified=True)
                         continue
@@ -412,7 +412,7 @@ def run_eiaa_cloud_check(cfg: Optional[Dict[str, Any]] = None) -> int:
             delivery_failed = True
         print(f"  [평가협회 새 알림 전송] [{cat_name}] {title} (ntfy: {sent})")
 
-    print(f"[{now_str}] 평가협회 검사 완료: 신규 알림 {new_alerts}건 발송됨.")
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 평가협회 검사 완료: 신규 알림 {new_alerts}건 발송됨.")
     if delivery_failed:
         raise RuntimeError("일부 ntfy 발송 실패: 미발송 건은 다음 실행에서 재시도")
     return new_alerts

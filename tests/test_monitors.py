@@ -51,6 +51,25 @@ class DeliveryStateTests(unittest.TestCase):
             store.save_notice(**args, notified=True)
             self.assertTrue(store.is_already_seen('1', '환경영향평가', '2026-11-12'))
 
+    def test_nara_send_failure_retries_then_deduplicates(self):
+        from cloud_run import run_cloud_check
+        with tempfile.TemporaryDirectory() as tmp:
+            store = NoticeStorage(str(Path(tmp) / 'state.db'))
+            notice = BidNotice('retry-1', '00', '환경영향평가 용역', '용역', '기관', '기관')
+            collector = Mock(search_errors=[])
+            collector.fetch_all.return_value = [notice]
+            notifier = Mock()
+            notifier.notify_all.side_effect = [{'ntfy': False}, {'ntfy': True}]
+            with patch('cloud_run.NoticeStorage', return_value=store), \
+                 patch('cloud_run.NaraCollector', return_value=collector), \
+                 patch('cloud_run.MultiChannelNotifier', return_value=notifier), \
+                 patch('cloud_run.requests.get', return_value=Mock(status_code=200, text='')):
+                with self.assertRaises(RuntimeError):
+                    run_cloud_check(include_auxiliary=False)
+                self.assertEqual(run_cloud_check(include_auxiliary=False), 1)
+                self.assertEqual(run_cloud_check(include_auxiliary=False), 0)
+                self.assertEqual(notifier.notify_all.call_count, 2)
+
     def test_source_entry_does_not_run_auxiliary(self):
         import run_source
         with patch('cloud_run.run_cloud_check') as run:
@@ -86,6 +105,19 @@ class SearchTests(unittest.TestCase):
             self.assertEqual(c.fetch_from_unty_search(2), [])
             self.assertEqual(post.call_count, 40)
             self.assertEqual(len(c.search_errors), 20)
+
+    def test_cloud_search_defers_budget_without_dropping_results(self):
+        item = {'bizNo': '1', 'bizNm': '환경영향평가', 'bizOrd': '00'}
+        def response(url, **kw):
+            items = [item] if kw['json']['dlSrchParamM']['untySrchSeCd'] == 'DD' else []
+            return Mock(raise_for_status=Mock(), json=lambda: {'dlTotalSrchL': items})
+        c = NaraCollector(enrich_budgets=False)
+        with patch('core.collector.requests.post', side_effect=response), \
+             patch.object(c, '_fetch_oder_plan_budget') as detail:
+            notices = c.fetch_from_unty_search(2)
+        self.assertEqual(len(notices), 1)
+        self.assertEqual(notices[0].stage, '발주계획')
+        detail.assert_not_called()
 
     def test_alio_error_is_not_empty_success(self):
         c = AlioCollector()

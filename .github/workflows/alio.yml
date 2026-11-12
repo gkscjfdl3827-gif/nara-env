@@ -1,6 +1,12 @@
 name: ALIO Independent Monitor
 
 on:
+  workflow_run:
+    workflows: ['Nara Environmental Notice Cloud Monitor']
+    types: [requested]
+    branches: [main]
+  schedule:
+    - cron: '7,22,37,52 * * * *' # fallback if external dispatch is unavailable
   workflow_dispatch:
     inputs:
       dry_run:
@@ -17,7 +23,7 @@ concurrency:
 
 jobs:
   collect:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

@@ -45,7 +45,7 @@ def run_cloud_check(include_auxiliary=True):
         keywords=custom_kws if custom_kws else None,
         exclude_keywords=custom_ex_kws if custom_ex_kws else None
     )
-    collector = NaraCollector(service_key=service_key)
+    collector = NaraCollector(service_key=service_key, enrich_budgets=False)
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{now_str}] 클라우드 나라장터 환경영향평가 모니터링 시작...")
@@ -120,6 +120,13 @@ def run_cloud_check(include_auxiliary=True):
                 storage.save_notice(notice, notified=True)
                 continue
 
+        # 상세 예산은 신규 알림에만 보강: 검색 범위와 발송 내용은 유지.
+        if not notice.budget:
+            if notice.stage == '발주계획':
+                notice.budget = collector._fetch_oder_plan_budget(notice.bid_no)
+            elif notice.stage == '사전규격':
+                notice.budget = collector._fetch_bf_spec_budget(notice.bid_no)
+
         # 저장 및 푸시 발송
         storage.save_notice(notice, notified=False)
         results = notifier.notify_all(notice)
@@ -131,7 +138,7 @@ def run_cloud_check(include_auxiliary=True):
             delivery_failed = True
         print(f"  [새 알림 전송] [{notice.stage}] [{cat_name}] {notice.title} (결과: {results})")
 
-    print(f"[{now_str}] 클라우드 나라장터 검사 완료: 신규 알림 {new_alerts}건 발송됨.")
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 클라우드 나라장터 검사 완료: 신규 알림 {new_alerts}건 발송됨.")
 
     if include_auxiliary:
         # 3. 알리오(ALIO) 공공기관 입찰공고 독립 검사 (기존 나라장터와 DB 및 ntfy 토픽 완전 분리)
