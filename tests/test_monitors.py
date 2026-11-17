@@ -63,6 +63,7 @@ class DeliveryStateTests(unittest.TestCase):
             with patch('cloud_run.NoticeStorage', return_value=store), \
                  patch('cloud_run.NaraCollector', return_value=collector), \
                  patch('cloud_run.MultiChannelNotifier', return_value=notifier), \
+                 patch('core.opening.run_openings', return_value=False), \
                  patch('cloud_run.requests.get', return_value=Mock(status_code=200, text='')):
                 with self.assertRaises(RuntimeError):
                     run_cloud_check(include_auxiliary=False)
@@ -110,7 +111,7 @@ class SearchTests(unittest.TestCase):
         item = {'bizNo': '1', 'bizNm': '환경영향평가', 'bizOrd': '00'}
         def response(url, **kw):
             items = [item] if kw['json']['dlSrchParamM']['untySrchSeCd'] == 'DD' else []
-            return Mock(raise_for_status=Mock(), json=lambda: {'dlTotalSrchL': items})
+            return Mock(status_code=200, raise_for_status=Mock(), json=lambda: {'dlTotalSrchL': items})
         c = NaraCollector(enrich_budgets=False)
         with patch('core.collector.requests.post', side_effect=response), \
              patch.object(c, '_fetch_oder_plan_budget') as detail:

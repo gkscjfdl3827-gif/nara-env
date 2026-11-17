@@ -118,6 +118,7 @@ def run_cloud_check(include_auxiliary=True):
             if notice.detail_url and notice.detail_url in recent_sent_signatures:
                 print(f"  [중복 알림 억제] 동일 나라장터 링크 일치: {notice.title}")
                 storage.save_notice(notice, notified=True)
+                storage.mark_as_notified(notice.unique_id)
                 continue
 
         # 상세 예산은 신규 알림에만 보강: 검색 범위와 발송 내용은 유지.
@@ -139,6 +140,15 @@ def run_cloud_check(include_auxiliary=True):
         print(f"  [새 알림 전송] [{notice.stage}] [{cat_name}] {notice.title} (결과: {results})")
 
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 클라우드 나라장터 검사 완료: 신규 알림 {new_alerts}건 발송됨.")
+
+    # Existing notice collection/delivery always runs first. Opening errors must
+    # not suppress or interrupt the original stages.
+    from core.opening import run_openings
+    try:
+        delivery_failed = run_openings(storage, notifier, ntfy_topic) or delivery_failed
+    except Exception as exc:
+        print(f'[Opening] Deferred after {type(exc).__name__}; retry next run')
+        delivery_failed = True
 
     if include_auxiliary:
         # 3. 알리오(ALIO) 공공기관 입찰공고 독립 검사 (기존 나라장터와 DB 및 ntfy 토픽 완전 분리)

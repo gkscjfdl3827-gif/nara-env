@@ -44,7 +44,7 @@ jobs:
         if: always()
         run: python scripts/persist_state.py nara
       - name: 실패 시 DB 복구본 보관
-        if: failure()
+        if: ${{ !success() }}
         uses: actions/upload-artifact@v4
         with:
           name: monitor-state-${{ github.run_id }}

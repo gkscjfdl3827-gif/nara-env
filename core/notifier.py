@@ -11,6 +11,26 @@ class MultiChannelNotifier:
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
 
+    def send_opening(self, notice, result, event):
+        """Only ntfy; stable event marker reconciles an ambiguous delivery."""
+        if not self.config.get('ntfy_topic'):
+            return False
+        payload = {
+            'topic': self.config['ntfy_topic'],
+            'title': f"🔔 [개찰결과] {notice['title']}",
+            'message': (f"공고번호: {notice['bid_no']}-{notice['bid_seq']}\n"
+                        f"발주기관: {notice['order_agency']}\n"
+                        f"공개 결과: {result['status']}\n"
+                        f"{result['url']}\n{event}"),
+            'click': result['url'], 'priority': 4, 'tags': ['bell', 'clipboard'],
+            'actions': [{'action': 'view', 'label': '개찰결과 바로가기', 'url': result['url']}]}
+        try:
+            # No immediate retry after an uncertain response. Next run checks
+            # ntfy receipts before retrying the same durable event.
+            return requests.post('https://ntfy.sh', json=payload, timeout=(2, 5)).status_code == 200
+        except requests.RequestException:
+            return False
+
     def format_message(self, notice: BidNotice) -> str:
         """알림용 텍스트 메시지 생성"""
         keywords_str = ", ".join(notice.matched_keywords) if notice.matched_keywords else "환경"
