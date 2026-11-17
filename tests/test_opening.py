@@ -11,11 +11,11 @@ import requests
 from core.models import BidNotice
 from core.storage import NoticeStorage
 from core.notifier import MultiChannelNotifier
-from core.opening import check_result, init_watch, marker, result_link, run_openings
+from core.opening import check_result, init_watch, marker, result_link, run_openings, is_historical
 
 
 ROW = dict(bidPbancNo='R26BK01813969', bidPbancOrd='000', bidClsfNo='0',
-           bidPrgrsOrd='001', prcmBsneSeCd='05', bidPgstCd='개찰완료')
+           bidPrgrsOrd='001', prcmBsneSeCd='05', bidPgstCd='개찰완료', onbsPrnmntDt='2099/01/01 11:00')
 RESULT = {'url': result_link(ROW), 'status': '개찰완료', 'row': ROW}
 
 
@@ -93,6 +93,24 @@ class OpeningTests(unittest.TestCase):
             self.assertFalse(run_openings(self.store, self.notifier, 'test'))
         self.assertEqual(self.state()[0]['notified'], 0)
         self.notifier.send_opening.assert_not_called()
+
+    def test_historical_result_never_sent_even_when_cached(self):
+        old = dict(RESULT, row=dict(ROW, onbsPrnmntDt='2026/11/17 11:00'))
+        init_watch(self.store)
+        with self.store._get_conn() as db:
+            db.execute('UPDATE opening_watch SET result=?', (json.dumps(old),)); db.commit()
+        with patch('core.opening.check_result') as check:
+            run_openings(self.store, self.notifier, 'test')
+            run_openings(self.store, self.notifier, 'test')
+        check.assert_not_called()
+        self.notifier.send_opening.assert_not_called()
+        self.assertEqual(self.state()[0]['suppressed'],1)
+        self.assertEqual(self.state()[0]['notified'],0)
+
+    def test_future_and_unknown_opening_dates(self):
+        self.assertFalse(is_historical(RESULT))
+        self.assertTrue(is_historical(dict(RESULT,row={})))
+        self.assertTrue(is_historical(dict(RESULT,row=dict(ROW,onbsPrnmntDt='invalid'))))
 
     def test_future_deadline_skips_queries(self):
         with self.store._get_conn() as db:
