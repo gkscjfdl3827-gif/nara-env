@@ -14,6 +14,19 @@ import requests
 
 KST = timezone(timedelta(hours=9))
 BASE = 'https://www.g2b.go.kr'
+# User requested future openings only; never drain the historical result backlog.
+OPENING_CUTOFF = datetime(2026, 11, 17, 11, 26, 30, tzinfo=KST)
+
+
+def is_historical(result):
+    try:
+        value = result['row']['onbsPrnmntDt'].replace('/', '-')
+        opened = datetime.fromisoformat(value).replace(tzinfo=KST)
+        return opened < OPENING_CUTOFF
+    except (KeyError, TypeError, ValueError, AttributeError):
+        # An unknown opening date cannot establish that this is a new result.
+        return True
+
 LIST_PATH = '/pb/pbo/pboc/OnbsRslt/selectOnbsRsltClsfList.do'
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36'
 CATEGORIES = {'물품': '조070001', '일반용역': '조070002', '기술용역': '조070003',
@@ -87,7 +100,9 @@ def init_watch(storage):
         db.execute('''CREATE TABLE IF NOT EXISTS opening_watch (
             bid_no TEXT NOT NULL, bid_seq TEXT NOT NULL, notice_id TEXT NOT NULL,
             next_check REAL NOT NULL DEFAULT 0, result TEXT, notified INTEGER NOT NULL DEFAULT 0,
-            last_error TEXT, PRIMARY KEY (bid_no, bid_seq))''')
+            last_error TEXT, suppressed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (bid_no, bid_seq))''')
+        if 'suppressed' not in {r[1] for r in db.execute('PRAGMA table_info(opening_watch)')}:
+            db.execute('ALTER TABLE opening_watch ADD COLUMN suppressed INTEGER NOT NULL DEFAULT 0')
         # notified=1 is the existing durable delivery acknowledgement. Never track
         # collected-only notices, plans, specifications, or title/keyword matches.
         rows = db.execute("SELECT unique_id,bid_no,bid_seq FROM notices WHERE stage='입찰공고' AND notified=1").fetchall()
@@ -107,7 +122,7 @@ def run_openings(storage, notifier, topic, limit=8, budget=25):
     with storage._get_conn() as db:
         rows = [dict(r) for r in db.execute('''SELECT w.*,n.title,n.category,n.order_agency,n.close_date
             FROM opening_watch w JOIN notices n ON n.unique_id=w.notice_id
-            WHERE w.notified=0 AND n.notified=1 AND w.next_check<=?
+            WHERE w.notified=0 AND w.suppressed=0 AND n.notified=1 AND w.next_check<=?
             ORDER BY (w.result IS NOT NULL) DESC,w.next_check,n.close_date DESC,w.bid_no LIMIT ?''', (now, limit * 10))]
     due = []
     for row in rows:
@@ -151,6 +166,13 @@ def run_openings(storage, notifier, topic, limit=8, budget=25):
         for row, result, error in pool.map(fetch, due):
             identity = (row['bid_no'], row['bid_seq'])
             event = marker(*identity)
+            if result and is_historical(result):
+                with storage._get_conn() as db:
+                    db.execute('UPDATE opening_watch SET suppressed=1,result=NULL,last_error=? WHERE bid_no=? AND bid_seq=?',
+                               ('historical-before-2026-11-17T11:26:30+09:00', *identity))
+                    db.commit()
+                print('[Opening] Historical result skipped:', *identity)
+                continue
             interval = 120
             if not result and not error:
                 try:
