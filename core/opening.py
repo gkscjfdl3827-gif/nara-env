@@ -9,24 +9,12 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode, quote
+from pathlib import Path
 
 import requests
 
 KST = timezone(timedelta(hours=9))
 BASE = 'https://www.g2b.go.kr'
-# User requested future openings only; never drain the historical result backlog.
-OPENING_CUTOFF = datetime(2026, 11, 17, 11, 26, 30, tzinfo=KST)
-
-
-def is_historical(result):
-    try:
-        value = result['row']['onbsPrnmntDt'].replace('/', '-')
-        opened = datetime.fromisoformat(value).replace(tzinfo=KST)
-        return opened < OPENING_CUTOFF
-    except (KeyError, TypeError, ValueError, AttributeError):
-        # An unknown opening date cannot establish that this is a new result.
-        return True
-
 LIST_PATH = '/pb/pbo/pboc/OnbsRslt/selectOnbsRsltClsfList.do'
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36'
 CATEGORIES = {'물품': '조070001', '일반용역': '조070002', '기술용역': '조070003',
@@ -110,7 +98,58 @@ def init_watch(storage):
             if row['bid_no'] and str(row['bid_seq']).isdigit():
                 db.execute('INSERT OR IGNORE INTO opening_watch(bid_no,bid_seq,notice_id) VALUES (?,?,?)',
                            (row['bid_no'], seq(row['bid_seq']), row['unique_id']))
+        # Explicit live-observed public results, never inferred from a schedule.
+        baseline_path = Path(__file__).with_name('opening_baseline.json')
+        if baseline_path.exists():
+            baseline = json.loads(baseline_path.read_text(encoding='utf-8'))
+            for no, order in baseline['public_keys']:
+                db.execute('UPDATE opening_watch SET suppressed=1,result=NULL,last_error=? '
+                           'WHERE bid_no=? AND bid_seq=? AND notified=0',
+                           ('already-public-at-migration', no, order))
+        # Old scheduled retry times must not delay a newly public result.
+        db.execute('CREATE TABLE IF NOT EXISTS opening_meta(key TEXT PRIMARY KEY,value TEXT)')
+        if not db.execute("SELECT 1 FROM opening_meta WHERE key='publication-v2'").fetchone():
+            # An old runner may have suppressed a newly published delayed result
+            # while this change was being deployed. Retain only the observed baseline.
+            db.execute("UPDATE opening_watch SET suppressed=0,last_error=NULL WHERE notified=0 AND last_error LIKE 'historical-before-%'")
+            if baseline_path.exists():
+                for no, order in baseline['public_keys']:
+                    db.execute('UPDATE opening_watch SET suppressed=1,last_error=? WHERE bid_no=? AND bid_seq=? AND notified=0',
+                               ('already-public-at-migration',no,order))
+            db.execute('UPDATE opening_watch SET next_check=0 WHERE notified=0 AND suppressed=0')
+            db.execute("INSERT INTO opening_meta VALUES('publication-v2','1')")
         db.commit()
+
+
+def recent_public_keys():
+    """Cheap discovery across existing search keywords; exact checks remain authoritative.
+
+    A seven-day overlapping discovery window finds delayed publications even when
+    their scheduled dates are older. Exact round-robin polling covers omissions,
+    older records, pagination overflow, and keyword changes.
+    """
+    keys = set()
+    now = datetime.now(KST)
+    with requests.Session() as session:
+        session.headers.update({'User-Agent': UA})
+        session.get(BASE + '/', timeout=(2, 4)).raise_for_status()
+        session.headers.update({'Menu-Info': json.dumps({'menuNo':'01522', 'menuCangVal':'PBOC006_01',
+            'bsneClsfCd':'%EC%97%85130028','scrnNo':'02117'}), 'Referer': BASE + '/'})
+        for keyword in ('환경영향', '전략환경', '소규모환경', '사후환경'):
+            params = dict(bidPbancNo='',bidPbancOrd='',bidPbancNm=keyword,
+                onbsYmdStr=(now-timedelta(days=6)).strftime('%Y%m%d'),onbsYmdEnd=now.strftime('%Y%m%d'),
+                prcmBsneSeCd='',frcpYn='Y',rsrvYn='Y',laseYn='Y',chkBsneAllYn='Y',
+                firstIndex='1',lastIndex='100',inqEnd='N',stepBarYn='',pbancKndCd='',
+                currentPage='1',recordCountPerPage='100')
+            response = session.post(BASE + LIST_PATH,json={'dlSrchOnbsRsltClsfListInM':params},timeout=(2,4))
+            response.raise_for_status()
+            data=response.json()
+            if data.get('ErrorCode') != 0 or not isinstance(data.get('result',{}).get('onbsRsltClsfList'),list):
+                raise ValueError('Invalid public discovery response')
+            for row in data['result']['onbsRsltClsfList']:
+                if row.get('bidPgstCd') in STATUSES and row.get('bidPbancNo'):
+                    keys.add((row['bidPbancNo'],seq(row['bidPbancOrd'])))
+    return keys
 
 
 def run_openings(storage, notifier, topic, limit=8, budget=25):
@@ -119,25 +158,19 @@ def run_openings(storage, notifier, topic, limit=8, budget=25):
         return False
     started = time.monotonic()
     now = time.time()
+    try:
+        public_keys = recent_public_keys()
+    except Exception as exc:
+        print('[Opening] Discovery deferred; exact polling continues:',type(exc).__name__)
+        public_keys = set()
     with storage._get_conn() as db:
         rows = [dict(r) for r in db.execute('''SELECT w.*,n.title,n.category,n.order_agency,n.close_date
             FROM opening_watch w JOIN notices n ON n.unique_id=w.notice_id
-            WHERE w.notified=0 AND w.suppressed=0 AND n.notified=1 AND w.next_check<=?
-            ORDER BY (w.result IS NOT NULL) DESC,w.next_check,n.close_date DESC,w.bid_no LIMIT ?''', (now, limit * 10))]
-    due = []
-    for row in rows:
-        try:
-            close = datetime.fromisoformat(row['close_date'].replace('/', '-')).replace(tzinfo=KST)
-            if close.timestamp() > now:
-                with storage._get_conn() as db:
-                    db.execute('UPDATE opening_watch SET next_check=? WHERE bid_no=? AND bid_seq=?',
-                               (close.timestamp(), row['bid_no'], row['bid_seq'])); db.commit()
-                continue
-        except (ValueError, TypeError):
-            pass  # Missing deadline must not silently disable tracking.
-        due.append(row)
-        if len(due) == limit:
-            break
+            WHERE w.notified=0 AND w.suppressed=0 AND n.notified=1
+            ORDER BY (w.result IS NOT NULL) DESC,w.next_check,w.bid_no''')]
+    candidates = [r for r in rows if r['next_check'] <= now or (r['bid_no'],r['bid_seq']) in public_keys]
+    candidates.sort(key=lambda r:(not bool(r['result']), (r['bid_no'],r['bid_seq']) not in public_keys,r['next_check']))
+    due = candidates[:limit]
     if not due:
         print('[Opening] No due delivered bids')
         return False
@@ -166,21 +199,7 @@ def run_openings(storage, notifier, topic, limit=8, budget=25):
         for row, result, error in pool.map(fetch, due):
             identity = (row['bid_no'], row['bid_seq'])
             event = marker(*identity)
-            if result and is_historical(result):
-                with storage._get_conn() as db:
-                    db.execute('UPDATE opening_watch SET suppressed=1,result=NULL,last_error=? WHERE bid_no=? AND bid_seq=?',
-                               ('historical-before-2026-11-17T11:26:30+09:00', *identity))
-                    db.commit()
-                print('[Opening] Historical result skipped:', *identity)
-                continue
             interval = 120
-            if not result and not error:
-                try:
-                    closed = datetime.fromisoformat(row['close_date'].replace('/', '-')).replace(tzinfo=KST)
-                    if now - closed.timestamp() > 7 * 86400:
-                        interval = 900
-                except (ValueError, TypeError):
-                    pass
             with storage._get_conn() as db:
                 db.execute('UPDATE opening_watch SET next_check=?,last_error=?,result=COALESCE(?,result) WHERE bid_no=? AND bid_seq=?',
                            (now + interval, error, json.dumps(result, ensure_ascii=False) if result else None, *identity))

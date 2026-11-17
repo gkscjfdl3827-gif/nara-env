@@ -11,7 +11,7 @@ import requests
 from core.models import BidNotice
 from core.storage import NoticeStorage
 from core.notifier import MultiChannelNotifier
-from core.opening import check_result, init_watch, marker, result_link, run_openings, is_historical
+from core.opening import check_result, init_watch, marker, result_link, run_openings, recent_public_keys
 
 
 ROW = dict(bidPbancNo='R26BK01813969', bidPbancOrd='000', bidClsfNo='0',
@@ -30,6 +30,8 @@ class OpeningTests(unittest.TestCase):
         self.notifier.send_opening.return_value = True
         self.poll = patch('core.opening.requests.get', return_value=Mock(text='', raise_for_status=Mock()))
         self.poll.start(); self.addCleanup(self.poll.stop)
+        self.discovery = patch('core.opening.recent_public_keys',return_value=set())
+        self.discovery.start();self.addCleanup(self.discovery.stop)
 
     def state(self):
         with self.store._get_conn() as db:
@@ -94,11 +96,11 @@ class OpeningTests(unittest.TestCase):
         self.assertEqual(self.state()[0]['notified'], 0)
         self.notifier.send_opening.assert_not_called()
 
-    def test_historical_result_never_sent_even_when_cached(self):
+    def test_observed_historical_result_never_sent_even_when_cached(self):
         old = dict(RESULT, row=dict(ROW, onbsPrnmntDt='2026/11/17 11:00'))
         init_watch(self.store)
         with self.store._get_conn() as db:
-            db.execute('UPDATE opening_watch SET result=?', (json.dumps(old),)); db.commit()
+            db.execute('UPDATE opening_watch SET result=?,suppressed=1', (json.dumps(old),)); db.commit()
         with patch('core.opening.check_result') as check:
             run_openings(self.store, self.notifier, 'test')
             run_openings(self.store, self.notifier, 'test')
@@ -107,17 +109,38 @@ class OpeningTests(unittest.TestCase):
         self.assertEqual(self.state()[0]['suppressed'],1)
         self.assertEqual(self.state()[0]['notified'],0)
 
-    def test_future_and_unknown_opening_dates(self):
-        self.assertFalse(is_historical(RESULT))
-        self.assertTrue(is_historical(dict(RESULT,row={})))
-        self.assertTrue(is_historical(dict(RESULT,row=dict(ROW,onbsPrnmntDt='invalid'))))
+    def test_delayed_publication_ignores_old_or_missing_schedule(self):
+        init_watch(self.store)
+        for date in ('2020/01/01 11:00','invalid',''):
+            with self.store._get_conn() as db:
+                db.execute('DELETE FROM opening_watch');db.commit()
+            result=dict(RESULT,row=dict(ROW,onbsPrnmntDt=date))
+            with patch('core.opening.check_result',return_value=result):
+                run_openings(self.store,self.notifier,'test')
+        self.assertEqual(self.notifier.send_opening.call_count,3)
 
-    def test_future_deadline_skips_queries(self):
+    def test_future_deadline_does_not_block_real_result(self):
         with self.store._get_conn() as db:
             db.execute("UPDATE notices SET close_date='2099/12/31 10:00'"); db.commit()
-        with patch('core.opening.check_result') as check:
+        with patch('core.opening.check_result',return_value=RESULT) as check:
             run_openings(self.store, self.notifier, 'test')
-        check.assert_not_called()
+        check.assert_called_once()
+        self.notifier.send_opening.assert_called_once()
+
+    def test_new_public_discovery_bypasses_old_retry_schedule(self):
+        init_watch(self.store)
+        with self.store._get_conn() as db:
+            db.execute('UPDATE opening_watch SET next_check=?',(time.time()+86400,));db.commit()
+        with patch('core.opening.recent_public_keys',return_value={(self.n.bid_no,'000')}), \
+             patch('core.opening.check_result',return_value=RESULT):
+            run_openings(self.store,self.notifier,'test')
+        self.notifier.send_opening.assert_called_once()
+
+    def test_discovery_failure_keeps_exact_polling(self):
+        with patch('core.opening.recent_public_keys',side_effect=requests.Timeout), \
+             patch('core.opening.check_result',return_value=RESULT):
+            self.assertFalse(run_openings(self.store,self.notifier,'test'))
+        self.notifier.send_opening.assert_called_once()
 
     def test_scan_is_bounded_and_fair(self):
         for i in range(10):
