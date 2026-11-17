@@ -21,6 +21,9 @@ class MultiChannelNotifier:
             'message': (f"공고번호: {notice['bid_no']}-{notice['bid_seq']}\n"
                         f"발주기관: {notice['order_agency']}\n"
                         f"공개 결과: {result['status']}\n"
+                        f"개찰 예정일시(참고): {(result.get('row') or {}).get('onbsPrnmntDt') or '나라장터 미제공'}\n"
+                        f"실제 개찰일시: {result.get('actual_opened_at') or '나라장터 미제공'}\n"
+                        f"결과 공개 확인: {result.get('public_confirmed_at') or '확인됨'}\n"
                         f"{result['url']}\n{event}"),
             'click': result['url'], 'priority': 4, 'tags': ['bell', 'clipboard'],
             'actions': [{'action': 'view', 'label': '개찰결과 바로가기', 'url': result['url']}]}

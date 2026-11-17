@@ -16,7 +16,8 @@ from core.opening import check_result, init_watch, marker, result_link, run_open
 
 ROW = dict(bidPbancNo='R26BK01813969', bidPbancOrd='000', bidClsfNo='0',
            bidPrgrsOrd='001', prcmBsneSeCd='05', bidPgstCd='개찰완료', onbsPrnmntDt='2099/01/01 11:00')
-RESULT = {'url': result_link(ROW), 'status': '개찰완료', 'row': ROW}
+RESULT = {'url': result_link(ROW), 'status': '개찰완료', 'row': ROW,
+          'actual_opened_at':'2026-11-17 13:25:23','public_confirmed_at':'2026-11-17 13:25:30'}
 
 
 class OpeningTests(unittest.TestCase):
@@ -162,6 +163,8 @@ class OpeningTests(unittest.TestCase):
             self.assertEqual(payload['click'], RESULT['url'])
             self.assertEqual(payload['actions'][0]['url'], RESULT['url'])
             self.assertIn(marker(self.n.bid_no,'000'),payload['message'])
+            self.assertIn('실제 개찰일시: 2026-11-17 13:25:23',payload['message'])
+            self.assertIn('개찰 예정일시(참고): 2099/01/01 11:00',payload['message'])
         with patch('core.notifier.requests.post', side_effect=requests.ReadTimeout) as post:
             self.assertFalse(n.send_opening(row, RESULT, 'event'))
             post.assert_called_once()
@@ -187,8 +190,10 @@ class ScreenContractTests(unittest.TestCase):
         session, context = self.session([ROW])
         with patch('core.opening.requests.Session', return_value=context):
             result=check_result({'bid_no':ROW['bidPbancNo'],'bid_seq':'000'})
-        self.assertEqual(result,RESULT)
-        params=session.post.call_args.kwargs['json']['dlSrchOnbsRsltClsfListInM']
+        self.assertEqual(result['url'],RESULT['url'])
+        self.assertEqual(result['row'],ROW)
+        self.assertIsNone(result['actual_opened_at'])
+        params=session.post.call_args_list[0].kwargs['json']['dlSrchOnbsRsltClsfListInM']
         self.assertTrue(all(isinstance(v,str) for v in params.values()))
         query=parse_qs(urlparse(result['url']).query)
         self.assertEqual(query['reBidNo'],['001'])

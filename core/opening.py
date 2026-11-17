@@ -46,6 +46,46 @@ def result_link(row):
     return BASE + '/link/PBOC007_01/single/?' + urlencode(params)
 
 
+def actual_result_time(session, row):
+    """Read only fields labelled actual opening time in the official detail screen."""
+    if row['bidPgstCd'] == '유찰':
+        operation = 'selectOnbsRsltFbid'
+    elif row['bidPgstCd'] == '재입찰':
+        operation = 'selectOnbsRsltRbid'
+    else:
+        operation = {'01':'selectOnbsRsltSbidGods','03':'selectOnbsRsltSbidGods',
+                     '05':'selectOnbsRsltSbidSrvc','07':'selectOnbsRsltSbidCstn'}.get(row['prcmBsneSeCd'])
+    if not operation:
+        return None  # Never substitute a scheduled date for an unavailable actual time.
+    session.headers.update({'Menu-Info':json.dumps({'menuNo':'01523','menuCangVal':'PBOC007_01',
+                            'bsneClsfCd':'%EC%97%85130028','scrnNo':'02128'})})
+    params={k:str(row[k]) for k in ('bidPbancNo','bidPbancOrd','bidClsfNo','bidPrgrsOrd','prcmBsneSeCd','bidPgstCd')}
+    params.update(bzmnRegNo='',reOpenPbancYN='',currentPage='1',recordCountPerPage='1')
+    response=session.post(BASE+'/pb/pbo/pboc/OnbsRslt/'+operation+'.do',
+                          json={'dlSrchOnbsRsltBidInM':params},timeout=(2,4))
+    response.raise_for_status()
+    data=response.json()
+    if data.get('ErrorCode') != 0 or not isinstance(data.get('result'),dict):
+        raise ValueError('Invalid actual opening detail response')
+    detail=data['result']
+    info=detail.get('bidInfo') or {}
+    # Validate returned identity whenever the detail endpoint supplies it.
+    if info.get('bidPbancNo') and (info['bidPbancNo'] != row['bidPbancNo'] or
+                                  seq(info.get('bidPbancOrd','')) != seq(row['bidPbancOrd'])):
+        raise ValueError('Actual opening detail identity mismatch')
+    values=[info.get('realOnbsDt'),(detail.get('etcData') or {}).get('bidOpenDt')]
+    for value in values:
+        if value:
+            try:
+                parsed=datetime.fromisoformat(str(value).replace('/','-'))
+                # A date alone does not establish an actual opening time.
+                if len(str(value)) >= 16:
+                    return parsed.strftime('%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                pass
+    return None
+
+
 def check_result(watch):
     """One exact-number query, bounded to 100 classifications; fail closed."""
     with requests.Session() as session:
@@ -79,7 +119,10 @@ def check_result(watch):
             landing.raise_for_status()
             if not re.search(r'"menuCangVal"\s*:\s*"PBOC007_01"', landing.text):
                 raise ValueError('Opening direct route not accepted')
-            return {'url': url, 'status': row['bidPgstCd'], 'row': row}
+            actual_at = actual_result_time(session, row)
+            return {'url': url, 'status': row['bidPgstCd'], 'row': row,
+                    'actual_opened_at': actual_at,
+                    'public_confirmed_at': datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')}
     return None
 
 
@@ -192,7 +235,10 @@ def run_openings(storage, notifier, topic, limit=8, budget=25):
     # Eight exact bid queries, at most four simultaneous; no national result scans.
     def fetch(row):
         try:
-            return row, json.loads(row['result']) if row['result'] else check_result(row), None
+            cached = json.loads(row['result']) if row['result'] else None
+            if cached is not None and 'actual_opened_at' not in cached:
+                cached = None  # Enrich an old unsent cache with actual-time metadata.
+            return row, cached if cached is not None else check_result(row), None
         except Exception as exc:
             return row, None, type(exc).__name__  # Never log request URLs/secrets.
     with ThreadPoolExecutor(max_workers=4) as pool:
